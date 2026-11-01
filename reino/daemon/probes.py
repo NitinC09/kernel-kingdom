@@ -3,7 +3,8 @@
 Una pasada por el árbol de procesos por tick leyendo un solo archivo por
 proceso (/proc/<pid>/stat: nombre, padre, tiempos de CPU, arranque y RSS); con
 cientos de procesos, psutil abre varios por cada uno y cuesta 10 veces más.
-Fuera de Linux se usa psutil. La cmdline solo se lee para nombres truncados y
+Fuera de Linux se usa psutil (en Windows sin el ".exe", para que los nombres de la
+config valgan en los dos sistemas). La cmdline solo se lee para nombres truncados y
 para los procesos de contenedores, y se cachea.
 """
 import os
@@ -14,9 +15,13 @@ import time
 
 import psutil
 
+from ..compat import WINDOWS
+
 _ATTRS = ["pid", "ppid", "name", "memory_info", "cpu_times", "create_time"]
 MB = 1024 * 1024
 _TICK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+# Linux: versión del kernel. Windows: el número de build (cambia con cada actualización grande)
+KERNEL = platform.version() if WINDOWS else platform.release()
 _PAGE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
 
 
@@ -57,6 +62,20 @@ def scan_proc(long_names: dict) -> dict[int, dict] | None:
         except (IndexError, ValueError):
             continue
     return out
+
+
+def _loopback(nic: str) -> bool:
+    return nic == "lo" or nic.startswith("Loopback")      # Windows: "Loopback Pseudo-Interface 1"
+
+
+def _load1() -> float:
+    try:
+        return os.getloadavg()[0]
+    except (AttributeError, OSError):                      # Windows: psutil la emula
+        try:
+            return psutil.getloadavg()[0]
+        except (AttributeError, OSError):
+            return 0.0
 
 
 def _arg_after(cmdline: list[str], flags: tuple[str, ...]) -> str | None:
@@ -147,8 +166,8 @@ class SystemProbe:
         net = psutil.net_io_counters(pernic=True)
         disk = psutil.disk_io_counters()
         return {
-            "net_rx": sum(v.bytes_recv for k, v in net.items() if k != "lo"),
-            "net_tx": sum(v.bytes_sent for k, v in net.items() if k != "lo"),
+            "net_rx": sum(v.bytes_recv for k, v in net.items() if not _loopback(k)),
+            "net_tx": sum(v.bytes_sent for k, v in net.items() if not _loopback(k)),
             "disk_r": disk.read_bytes if disk else 0,
             "disk_w": disk.write_bytes if disk else 0,
         }
@@ -176,6 +195,8 @@ class SystemProbe:
         if now - self._last_at < 60:
             return self._last
         self._last_at = now
+        if WINDOWS:                    # sin wtmp: las visitas llegan solo desde psutil.users()
+            return self._windows_logins()
         try:
             out = subprocess.run(["last", "-n", "400", "-w", "--time-format", "iso"],
                                  capture_output=True, text=True, timeout=3).stdout
@@ -198,6 +219,23 @@ class SystemProbe:
         self._last = {"sessions": sessions, "boots": boots[:40], "visits": visits}
         return self._last
 
+    def _windows_logins(self) -> dict:
+        """Sesiones abiertas (consola o Escritorio remoto) y el arranque actual."""
+        sessions, visits = [], {}
+        try:
+            users = psutil.users()
+        except (AttributeError, OSError):
+            users = []
+        for u in users:
+            host = u.host or ""
+            visits[host or "local"] = visits.get(host or "local", 0) + 1
+            start = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(u.started)) if u.started else ""
+            sessions.append({"user": u.name, "tty": u.terminal or "console", "host": host, "start": start})
+        boots = [{"kernel": KERNEL,
+                  "start": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(psutil.boot_time()))}]
+        self._last = {"sessions": sessions, "boots": boots, "visits": visits}
+        return self._last
+
     # -- muestreo -----------------------------------------------------------
 
     def sample(self) -> dict:
@@ -211,7 +249,10 @@ class SystemProbe:
             procs = {}
             for p in psutil.process_iter(_ATTRS, ad_value=None):
                 i = p.info
-                procs[i["pid"]] = {"pid": i["pid"], "ppid": i["ppid"], "name": i["name"],
+                name = i["name"] or ""
+                if WINDOWS and name[-4:].lower() == ".exe":
+                    name = name[:-4]
+                procs[i["pid"]] = {"pid": i["pid"], "ppid": i["ppid"], "name": name,
                                    "rss": i["memory_info"].rss if i["memory_info"] else 0,
                                    "cpu": (i["cpu_times"].user + i["cpu_times"].system) if i["cpu_times"] else None,
                                    "create_time": i["create_time"]}
@@ -303,7 +344,7 @@ class SystemProbe:
             "ram_used_mb": round((vm.total - vm.available) / MB),
             "ram_total_mb": round(vm.total / MB),
             "swap": psutil.swap_memory().percent,
-            "load1": round(os.getloadavg()[0], 2),
+            "load1": round(_load1(), 2),
             "cores": psutil.cpu_count() or 1,
             "procs": len(procs),
             "browsers": browsers,
@@ -316,7 +357,7 @@ class SystemProbe:
             "deaths": deaths,
             "cpu_temp": self._cpu_temp(),
             "boot": round(psutil.boot_time()),
-            "kernel": platform.release(),
+            "kernel": KERNEL,
             **self.logins(),               # sessions, boots, visits
             **rates,                       # net_rx, net_tx, disk_r, disk_w en MB/s
         }

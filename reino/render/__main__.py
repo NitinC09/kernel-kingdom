@@ -19,8 +19,8 @@ LAYER_SHELL_LIB = "libgtk4-layer-shell.so"
 def _ensure_layer_shell_preload():
     """gtk4-layer-shell tiene que cargarse antes que libwayland-client.
     Desde Python la única forma confiable es LD_PRELOAD, así que nos re-ejecutamos."""
-    if LAYER_SHELL_LIB in os.environ.get("LD_PRELOAD", ""):
-        return
+    if not sys.platform.startswith("linux") or LAYER_SHELL_LIB in os.environ.get("LD_PRELOAD", ""):
+        return                               # layer-shell es solo de Wayland
     for d in ("/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu"):
         for lib in sorted(Path(d).glob(LAYER_SHELL_LIB + "*")):  # Fedora solo trae .so.0
             env = dict(os.environ, LD_PRELOAD=f"{lib} {os.environ.get('LD_PRELOAD', '')}".strip())
@@ -34,7 +34,7 @@ def snapshot(args, cfg):
 
     from .iso import Painter, detail_for, fit_scale, zoom_scales
 
-    state = json.loads(Path(args.state).read_text())
+    state = json.loads(Path(args.state).read_text(encoding="utf-8"))
     painter = Painter(hemisphere=cfg["render"]["hemisphere"])
     painter.hour_override = args.hour
     painter.season_override = args.season
@@ -101,12 +101,15 @@ def main():
     ap.add_argument("--no-ui", action="store_true", help="--snapshot: sin HUD ni crónica")
     ap.add_argument("--window", action="store_true", help="--snapshot: interfaz del modo ventana (listas, poderes)")
     ap.add_argument("--hour", type=float, help="forzar hora del día (0-24)")
+    ap.add_argument("--start-delay", type=float, default=0, help=argparse.SUPPRESS)   # relanzarse tras reiniciar Explorer
     args = ap.parse_args()
     cfg = config.load(args.config)
     i18n.set_lang(cfg.get("language", "auto"))
 
     if args.snapshot:
         return snapshot(args, cfg)
+    if args.start_delay:
+        time.sleep(args.start_delay)
     if not args.windowed:
         _ensure_layer_shell_preload()
     from .app import run

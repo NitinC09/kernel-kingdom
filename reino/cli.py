@@ -13,10 +13,12 @@
     kernel-kingdom update          # baja la última versión y reinicia lo que esté corriendo
     kernel-kingdom timelapse       # GIF de cómo cambiaron las fronteras hoy
     kernel-kingdom snapshot out.png
+
+En Windows no hay systemd: el fondo va detrás de los íconos del escritorio (render/win_desktop.py),
+`install` pone el lanzador en el menú Inicio y el mundo y el fondo en la carpeta Inicio.
 """
 import argparse
 import os
-import select
 import shutil
 import signal
 import subprocess
@@ -24,7 +26,8 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, i18n, paths
+from . import compat, config, i18n, paths
+from .compat import WINDOWS
 from .i18n import ui
 
 UNIT_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "systemd" / "user"
@@ -59,7 +62,11 @@ WantedBy=graphical-session.target
 
 
 def monitors() -> list[str]:
-    """Conectores de los monitores (DP-1, HDMI-A-1...) preguntándole al compositor."""
+    """Conectores de los monitores (DP-1, HDMI-A-1...) preguntándole al compositor.
+    En Windows: índices ("0" el principal, "1"...)."""
+    if WINDOWS:
+        from .render.win_desktop import monitors as win_monitors
+        return [str(k) for k in range(len(win_monitors()))]
     from .wl import Connection
     names: dict[int, str] = {}
     conn = None
@@ -97,21 +104,17 @@ def _pidfile(name: str) -> Path:
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return compat.pid_alive(pid)          # en Windows os.kill(pid, 0) mataría el proceso
 
 
 def _detach(name: str, module: str, *args: str) -> int:
     """Lanza un proceso separado de la terminal (sin salida en pantalla: va a un log)."""
-    log = open(_logs() / f"{name}.log", "a")
+    log = open(_logs() / f"{name}.log", "a", encoding="utf-8")
     env = dict(os.environ)
     if IS_CHECKOUT:
         env["PYTHONPATH"] = f"{DEV_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
     proc = subprocess.Popen([sys.executable, "-m", module, *args], stdin=subprocess.DEVNULL, stdout=log,
-                            stderr=log, start_new_session=True, cwd=DEV_ROOT if IS_CHECKOUT else None, env=env)
+                            stderr=log, cwd=DEV_ROOT if IS_CHECKOUT else None, env=env, **compat.detach_kwargs())
     _pidfile(name).write_text(str(proc.pid))
     return proc.pid
 
@@ -119,6 +122,22 @@ def _detach(name: str, module: str, *args: str) -> int:
 def _running(name: str) -> bool:
     f = _pidfile(name)
     return f.exists() and f.read_text().strip().isdigit() and _alive(int(f.read_text()))
+
+
+WIN_WORLD_LNK, WIN_WALLPAPER_LNK = "Kernel Kingdom (world).lnk", "Kernel Kingdom (wallpaper).lnk"
+
+
+def _win_refresh_wallpaper():
+    """Tras cerrar los fondos, que Windows repinte su imagen (no queda un cuadro viejo)."""
+    try:
+        from .render.win_desktop import refresh_wallpaper
+        refresh_wallpaper()
+    except OSError:
+        pass
+
+
+def _systemd() -> bool:
+    return not WINDOWS and shutil.which("systemctl") is not None
 
 
 def _unit_active(unit: str) -> bool:
@@ -147,6 +166,10 @@ def cmd_run(args):
     """Fondo de pantalla en todos los monitores, en segundo plano. La terminal queda libre."""
     if args.foreground:
         return _foreground(args)
+    if not compat.WALLPAPER:
+        print(ui("cli.no_wallpaper"))
+        args.mini = False
+        return cmd_window(args)
     ensure_daemon()
     targets = args.monitors.split(",") if args.monitors and args.monitors != "all" else (monitors() or [None])
     for m in targets:
@@ -162,7 +185,7 @@ def cmd_window(args):
     """Abre la ventana y devuelve la terminal. Cerrar la ventana no detiene el mundo."""
     ensure_daemon()
     if args.foreground:
-        os.execv(sys.executable, [sys.executable, "-m", "reino.render", "--windowed"])
+        compat.exec_python("-m", "reino.render", "--windowed")
     _detach("window", "reino.render", "--windowed", *(["--mini"] if getattr(args, "mini", False) else []))
     print(ui("cli.window"))
 
@@ -172,10 +195,11 @@ def relaunch_window(delay: float = 1.5):
     env = dict(os.environ)
     if IS_CHECKOUT:
         env["PYTHONPATH"] = f"{DEV_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
-    log = open(_logs() / "window.log", "a")
-    subprocess.Popen(["sh", "-c", f'sleep {delay}; exec "$0" -m reino.render --windowed', sys.executable],
-                     stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
-                     cwd=DEV_ROOT if IS_CHECKOUT else None, env=env)
+    log = open(_logs() / "window.log", "a", encoding="utf-8")
+    boot = (f"import runpy, sys, time; time.sleep({delay}); sys.argv = ['reino.render', '--windowed']; "
+            "runpy.run_module('reino.render', run_name='__main__', alter_sys=True)")
+    subprocess.Popen([sys.executable, "-c", boot], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                     cwd=DEV_ROOT if IS_CHECKOUT else None, env=env, **compat.detach_kwargs())
 
 
 def cmd_update(args):
@@ -204,16 +228,40 @@ def apply_update() -> tuple[bool, str, list[str]]:
         _write_units()                            # por si cambió algo en los servicios
         _systemctl("daemon-reload", check=False)
         install_launcher()
-    return True, "", update.restart_services()
+    restarted = update.restart_services()
+    if not restarted and _running("daemon"):          # sin systemd (Windows): el mundo suelto
+        _stop_pid("daemon")
+        _detach("daemon", "reino.daemon")
+        restarted = ["daemon"]
+    return True, "", restarted
+
+
+def _stop_pid(name: str):
+    """Detiene un proceso lanzado con _detach. En Windows no hay SIGTERM que atrapar: al daemon
+    se le pide que salga (así guarda el mundo) y solo si no responde se lo termina."""
+    f = _pidfile(name)
+    pid = int(f.read_text()) if f.exists() and f.read_text().strip().isdigit() else 0
+    if pid and _alive(pid):
+        if WINDOWS and name == "daemon":
+            folder = paths.commands_dir()
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{time.time_ns()}.json").write_text('{"action": "quit"}')
+            for _ in range(50):
+                if not _alive(pid):
+                    break
+                time.sleep(0.1)
+        if _alive(pid):
+            compat.terminate(pid)
+    f.unlink(missing_ok=True)
 
 
 def cmd_stop(args):
-    for name in ("window", *(p.stem for p in (paths.state_file().parent / "pids").glob("render-*.pid")), "daemon"):
-        f = _pidfile(name)
-        if f.exists() and f.read_text().strip().isdigit() and _alive(int(f.read_text())):
-            os.kill(int(f.read_text()), signal.SIGTERM)
-        f.unlink(missing_ok=True)
-    if shutil.which("systemctl"):
+    renders = [p.stem for p in (paths.state_file().parent / "pids").glob("render-*.pid")]
+    for name in ("window", *renders, "daemon"):
+        _stop_pid(name)
+    if WINDOWS and renders:
+        _win_refresh_wallpaper()
+    if _systemd():
         out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend", "kernel-kingdom*"],
                              capture_output=True, text=True).stdout
         for line in out.splitlines():
@@ -236,7 +284,7 @@ def _foreground(args):
     signal.signal(signal.SIGTERM, stop)
     try:
         while all(p.poll() is None for p in procs):
-            select.select([], [], [], 1)
+            time.sleep(1)
     finally:
         stop()
         for p in procs:
@@ -250,6 +298,14 @@ def _systemctl(*a, check=True):
 def install_launcher():
     """Lanzador 'Kernel Kingdom' en el menú de aplicaciones (abre la ventana)."""
     from . import icon
+    if WINDOWS:
+        png = paths.data_dir() / "kernel-kingdom.png"
+        icon.make(png)
+        compat.png_to_ico(png, png.with_suffix(".ico"))
+        compat.make_shortcut(compat.start_menu() / "Kernel Kingdom.lnk", compat.gui_python(), "-m reino window",
+                             icon=str(png.with_suffix(".ico")), workdir=str(DEV_ROOT) if IS_CHECKOUT else "",
+                             desc="Your computer as a pixel-art kingdom")
+        return
     icon.make(DATA / "icons" / "hicolor" / "256x256" / "apps" / "kernel-kingdom.png")
     apps = DATA / "applications"
     apps.mkdir(parents=True, exist_ok=True)
@@ -267,6 +323,16 @@ def install_launcher():
 
 def cmd_install(args):
     install_launcher()
+    if WINDOWS:                                           # arranque automático: carpeta Inicio
+        compat.make_shortcut(compat.startup_folder() / WIN_WORLD_LNK, compat.gui_python(),
+                             "-m reino daemon", workdir=str(DEV_ROOT) if IS_CHECKOUT else "",
+                             desc="Kernel Kingdom: the world simulation")
+        ensure_daemon()
+        targets = [] if args.no_wallpaper else wallpaper_on()
+        print(ui("cli.installed", monitors=", ".join(targets)) if targets else ui("cli.installed_world"))
+        print(ui("cli.autostart"))
+        print(ui("cli.win_logs", path=_logs()))
+        return
     if not shutil.which("systemctl"):
         print(ui("cli.no_systemctl"))
         return
@@ -294,6 +360,8 @@ def _write_units():
 # -- fondo de pantalla: prender / apagar (desde la terminal o desde el menú de la app) ----
 
 def wallpaper_status() -> bool:
+    if not compat.WALLPAPER:
+        return False
     if shutil.which("systemctl"):
         out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend", "--state=active",
                               "kernel-kingdom-render@*"], capture_output=True, text=True).stdout
@@ -306,7 +374,7 @@ def wallpaper_on() -> list[str]:
     """Fondo en todos los monitores; con systemd, además arranca solo con la sesión."""
     ensure_daemon()
     targets = monitors()
-    if shutil.which("systemctl"):
+    if _systemd():
         _write_units()
         _systemctl("daemon-reload", check=False)
         for m in targets:
@@ -315,11 +383,15 @@ def wallpaper_on() -> list[str]:
         for m in targets:
             if not _running(f"render-{m}"):
                 _detach(f"render-{m}", "reino.render", "--monitor", m)
+    if WINDOWS:                                           # que vuelva solo al iniciar sesión
+        compat.make_shortcut(compat.startup_folder() / WIN_WALLPAPER_LNK, compat.gui_python(), "-m reino run",
+                             workdir=str(DEV_ROOT) if IS_CHECKOUT else "",
+                             desc="Kernel Kingdom: the wallpaper")
     return targets
 
 
 def wallpaper_off():
-    if shutil.which("systemctl"):
+    if _systemd():
         out = subprocess.run(["systemctl", "--user", "list-unit-files", "--plain", "--no-legend",
                               "kernel-kingdom-render@*"], capture_output=True, text=True).stdout
         units = {line.split()[0] for line in out.splitlines() if "@." not in line.split()[0]}
@@ -328,13 +400,19 @@ def wallpaper_off():
         units |= {line.split()[0] for line in out.splitlines()}
         for unit in units:
             _systemctl("disable", "--now", unit, check=False)
-    for f in (paths.state_file().parent / "pids").glob("render-*.pid"):
-        if f.read_text().strip().isdigit() and _alive(int(f.read_text())):
-            os.kill(int(f.read_text()), signal.SIGTERM)
-        f.unlink(missing_ok=True)
+    pids = list((paths.state_file().parent / "pids").glob("render-*.pid"))
+    for f in pids:
+        _stop_pid(f.stem)
+    if WINDOWS:
+        (compat.startup_folder() / WIN_WALLPAPER_LNK).unlink(missing_ok=True)
+        if pids:
+            _win_refresh_wallpaper()
 
 
 def cmd_wallpaper(args):
+    if args.state != "status" and not compat.WALLPAPER:
+        print(ui("cli.no_wallpaper"))
+        return 1
     if args.state == "on":
         print(ui("toast.wallpaper_on", monitors=", ".join(wallpaper_on())))
     elif args.state == "off":
@@ -345,18 +423,30 @@ def cmd_wallpaper(args):
 
 
 def cmd_uninstall(args):
-    units = [p.name for p in UNIT_DIR.glob("kernel-kingdom*")]
+    if WINDOWS:
+        cmd_stop(args)
+        for lnk in (compat.start_menu() / "Kernel Kingdom.lnk", compat.startup_folder() / WIN_WORLD_LNK,
+                    compat.startup_folder() / WIN_WALLPAPER_LNK):
+            lnk.unlink(missing_ok=True)
+        for ext in (".png", ".ico"):
+            (paths.data_dir() / f"kernel-kingdom{ext}").unlink(missing_ok=True)
+        print(ui("cli.uninstalled", path=paths.save_file()))
+        return
+    if not _systemd():
+        cmd_stop(args)
+    units = [p.name for p in UNIT_DIR.glob("kernel-kingdom*")] if _systemd() else []
     for name in units:
         if name.endswith("@.service"):
             continue
         _systemctl("disable", "--now", name, check=False)
-    out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend", "kernel-kingdom-render@*"],
-                         capture_output=True, text=True).stdout
-    for line in out.splitlines():
-        _systemctl("disable", "--now", line.split()[0], check=False)
-    for name in units:
-        (UNIT_DIR / name).unlink(missing_ok=True)
-    _systemctl("daemon-reload", check=False)
+    if _systemd():
+        out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend",
+                              "kernel-kingdom-render@*"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            _systemctl("disable", "--now", line.split()[0], check=False)
+        for name in units:
+            (UNIT_DIR / name).unlink(missing_ok=True)
+        _systemctl("daemon-reload", check=False)
     (DATA / "applications" / f"{APP_ID}.desktop").unlink(missing_ok=True)
     (DATA / "icons" / "hicolor" / "256x256" / "apps" / "kernel-kingdom.png").unlink(missing_ok=True)
     print(ui("cli.uninstalled", path=paths.save_file()))
@@ -384,6 +474,20 @@ def cmd_doctor(args):
         check("PyGObject + GTK 4 + pycairo", True)
     except (ImportError, ValueError):
         check("PyGObject + GTK 4 + pycairo", False, _deps_hint())
+    if WINDOWS:
+        from .compat import idle_seconds
+        from .render import win_desktop
+        try:
+            layer, mons = win_desktop.desktop_layer(), win_desktop.monitors()
+        except OSError:
+            layer, mons = None, []
+        check(ui("cli.win_layer"), layer, ui("cli.win_layer_hint"))
+        print(f"    {ui('cli.monitors')}: " + ", ".join(
+            f"{k} ({m['rect'][2] - m['rect'][0]}x{m['rect'][3] - m['rect'][1]})" for k, m in enumerate(mons)))
+        idle = idle_seconds() is not None
+        print(f"  {'✔' if idle else '·'} {ui('cli.win_presence')}: {ui('cli.yes') if idle else ui('cli.no')}")
+        print(ui("cli.ok") if ok else ui("cli.missing"))
+        return 0 if ok else 1
     try:
         import gi
         gi.require_version("Gtk4LayerShell", "1.0")
@@ -411,6 +515,9 @@ def cmd_doctor(args):
 
 
 def _deps_hint() -> str:
+    if WINDOWS:
+        return ("install.ps1, or in the MSYS2 UCRT64 terminal (https://www.msys2.org): pacman -S "
+                "mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-python-gobject mingw-w64-ucrt-x86_64-python-psutil")
     osr = Path("/etc/os-release").read_text() if Path("/etc/os-release").exists() else ""
     if "ostree" in osr or Path("/run/ostree-booted").exists():
         return "rpm-ostree install python3-gobject gtk4 gtk4-layer-shell  (y reiniciá)"
@@ -454,7 +561,8 @@ def main():
     win.add_argument("-f", "--foreground", action="store_true")
     win.add_argument("--mini", action="store_true", help="ventana chica con cámara automática (tecla m)")
     sub.add_parser("stop", help="detiene todo (ventana, wallpaper y daemon)")
-    inst = sub.add_parser("install", help="lanzador en el menú + arranque automático (systemd --user)")
+    sub.add_parser("daemon", help="solo el mundo, en segundo plano (lo usa el arranque automático de Windows)")
+    inst = sub.add_parser("install", help="lanzador en el menú + arranque automático (systemd --user; Windows: carpeta Inicio)")
     inst.add_argument("--monitors", default="all")
     inst.add_argument("--no-wallpaper", action="store_true", help="solo el mundo y el lanzador, sin fondo de pantalla")
     wp = sub.add_parser("wallpaper", help="prender/apagar el fondo de pantalla (on, off, status)")
@@ -484,9 +592,9 @@ def main():
             args.monitors, args.foreground = "all", False
         return cmd_run(args)
     if args.cmd == "chronicle":
-        os.execv(sys.executable, [sys.executable, "-m", "reino.daemon", "--chronicle"])
+        compat.exec_python("-m", "reino.daemon", "--chronicle")
     if args.cmd == "snapshot":
-        os.execv(sys.executable, [sys.executable, "-m", "reino.render", "--snapshot", args.png, *args.extra])
+        compat.exec_python("-m", "reino.render", "--snapshot", args.png, *args.extra)
     if args.cmd == "story":
         return cmd_story(args)
     if args.cmd == "timelapse":
@@ -494,6 +602,8 @@ def main():
         out = timelapse.export(args.date)
         print(ui("timelapse.saved", path=out) if out else ui("timelapse.empty"))
         return 0 if out else 1
+    if args.cmd == "daemon":
+        return ensure_daemon()
     return {"window": cmd_window, "stop": cmd_stop, "update": cmd_update, "wallpaper": cmd_wallpaper, "install": cmd_install, "uninstall": cmd_uninstall,
             "doctor": cmd_doctor, "config": cmd_config}[args.cmd](args)
 

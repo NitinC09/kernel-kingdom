@@ -1,0 +1,158 @@
+"""Diferencias entre sistemas operativos, todas en un solo lugar.
+
+Linux es el camino de siempre (nada cambia ahí). En Windows:
+  * no hay systemd, Wayland, /proc ni /dev/input: el daemon usa psutil y
+    GetLastInputInfo (presencia), el arranque automático es un acceso directo
+    en la carpeta Inicio y el lanzador va al menú Inicio;
+  * os.kill(pid, 0) *mata* el proceso, así que la vida de un pid se mira con psutil;
+  * os.execv no reemplaza el proceso de verdad: se lanza un hijo y se espera.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+WINDOWS = sys.platform == "win32"
+LINUX = sys.platform.startswith("linux")
+WALLPAPER = LINUX or WINDOWS   # Linux: layer-shell de Wayland. Windows: la capa WorkerW de Explorer
+
+
+def bootstrap():
+    """Windows + MSYS2: GTK carga sus DLL por PATH. Un venv (o un acceso directo del menú
+    Inicio) no hereda la carpeta del Python base, así que se agrega antes de `import gi`."""
+    if not WINDOWS:
+        return
+    dirs = []
+    for exe in (getattr(sys, "_base_executable", None), sys.executable):
+        if exe and os.path.dirname(exe) not in dirs:
+            dirs.append(os.path.dirname(exe))
+    path = os.environ.get("PATH", "")
+    missing = [d for d in dirs if d and d.lower() not in path.lower()]
+    if missing:
+        os.environ["PATH"] = os.pathsep.join([*missing, path])
+    for d in dirs:
+        try:
+            os.add_dll_directory(d)
+        except (OSError, AttributeError):
+            pass
+    for stream in (sys.stdout, sys.stderr):          # ✔ ✘ y tildes en la consola cp1252
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+def pid_alive(pid: int) -> bool:
+    if WINDOWS:
+        import psutil
+        try:
+            return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+        except psutil.Error:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def terminate(pid: int):
+    if WINDOWS:
+        import psutil
+        try:
+            psutil.Process(pid).terminate()
+        except psutil.Error:
+            pass
+        return
+    import signal
+    os.kill(pid, signal.SIGTERM)
+
+
+def detach_kwargs() -> dict:
+    """Popen(...) separado de la terminal: nueva sesión en POSIX; en Windows, sin consola
+    y en su propio grupo (cerrar la terminal no lo mata)."""
+    if WINDOWS:
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
+    return {"start_new_session": True}
+
+
+def exec_python(*args: str):
+    """Reemplaza este proceso por `python args...` (en Windows: lo corre y sale con su código)."""
+    argv = [sys.executable, *args]
+    if not WINDOWS:
+        os.execv(sys.executable, argv)
+    sys.exit(subprocess.call(argv))
+
+
+def lower_priority(nice: int):
+    if hasattr(os, "nice"):
+        try:
+            os.nice(nice)
+        except OSError:
+            pass
+        return
+    try:
+        import psutil
+        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if nice > 0 else psutil.NORMAL_PRIORITY_CLASS)
+    except Exception:
+        pass
+
+
+def idle_seconds() -> float | None:
+    """Segundos sin teclado ni mouse (Windows: GetLastInputInfo). None si no se puede saber."""
+    if not WINDOWS:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+        return None
+    now = ctypes.windll.kernel32.GetTickCount() & 0xFFFFFFFF
+    return ((now - info.dwTime) & 0xFFFFFFFF) / 1000
+
+
+# -- Windows: menú Inicio y arranque automático ------------------------------------------
+
+def _appdata() -> Path:
+    return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+
+
+def start_menu() -> Path:
+    return _appdata() / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+
+
+def startup_folder() -> Path:
+    return start_menu() / "Startup"
+
+
+def gui_python() -> str:
+    """pythonw.exe (sin ventana de consola) si existe al lado del intérprete."""
+    w = Path(sys.executable).with_name("pythonw.exe")
+    return str(w) if w.exists() else sys.executable
+
+
+def png_to_ico(png: Path, ico: Path):
+    """Un .ico con el PNG adentro (válido desde Vista): así no hace falta Pillow."""
+    import struct
+    data = png.read_bytes()
+    w, h = struct.unpack(">II", data[16:24])
+    ico.write_bytes(struct.pack("<HHH", 0, 1, 1)
+                    + struct.pack("<BBBBHHII", w % 256, h % 256, 0, 0, 1, 32, len(data), 22) + data)
+
+
+def make_shortcut(lnk: Path, target: str, args: str = "", icon: str = "", workdir: str = "", desc: str = ""):
+    """Acceso directo .lnk con WScript.Shell (viene con todo Windows), vía PowerShell."""
+    def q(s: str) -> str:
+        return "'" + str(s).replace("'", "''") + "'"
+    lnk.parent.mkdir(parents=True, exist_ok=True)
+    script = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut({q(lnk)});"
+              f"$s.TargetPath={q(target)};$s.Arguments={q(args)};$s.Description={q(desc)};"
+              + (f"$s.IconLocation={q(icon)};" if icon else "")
+              + (f"$s.WorkingDirectory={q(workdir)};" if workdir else "")
+              + "$s.Save()")
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                   check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)

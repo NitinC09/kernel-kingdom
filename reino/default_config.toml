@@ -1,6 +1,7 @@
 # Configuración por defecto de kernel-kingdom.
 # No edites este archivo: copiá las secciones que quieras cambiar a
-# ~/.config/kernel-kingdom/config.toml (kernel-kingdom config lo crea) y se mezclan encima.
+# ~/.config/kernel-kingdom/config.toml (en Windows %APPDATA%\kernel-kingdom\config.toml;
+# kernel-kingdom config lo crea) y se mezclan encima.
 
 language = "auto"     # "auto" (según el idioma del sistema), "es" o "en"
 
@@ -23,6 +24,7 @@ chrome   = ["chrome", "chromium", "chromium-browse", "google-chrome", "chrome_cr
 firefox  = ["firefox", "firefox-bin"]
 zen      = ["zen", "zen-bin"]
 brave    = ["brave", "brave-browser"]
+edge     = ["msedge"]
 electron = ["vesktop", "vesktop.bin", "Discord", "discord", "slack", "obsidian", "electron"]
 
 [browsers_rules]
@@ -39,6 +41,7 @@ chrome   = [217, 74, 61]
 firefox  = [240, 138, 36]
 zen      = [142, 108, 216]
 brave    = [242, 95, 28]
+edge     = [38, 166, 154]
 electron = [91, 141, 239]
 
 # Otras apps pesadas que no son navegadores -> aldeas con un edificio emblema
@@ -49,7 +52,14 @@ mb_per_tile = 30
 max_tiles = 14
 ignore = ["python3", "python", "Xwayland", "systemd", "pipewire", "wireplumber", "mpvpaper",
           "gnome-keyring-daemon", "dbus-broker", "flatpak-session-helper", "bwrap", "conmon",
-          "claude-code-guide"]
+          "claude-code-guide",
+          # Windows: procesos del sistema que no son "apps" (los nombres van sin .exe)
+          "pythonw", "System", "Registry", "Memory Compression", "MemCompression", "svchost", "csrss",
+          "lsass", "services", "smss", "wininit", "winlogon", "dwm", "explorer", "sihost", "taskhostw",
+          "ctfmon", "conhost", "dllhost", "fontdrvhost", "spoolsv", "audiodg", "MsMpEng", "NisSrv",
+          "SearchIndexer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost",
+          "RuntimeBroker", "WmiPrvSE", "SecurityHealthService", "LsaIso", "WUDFHost", "Widgets",
+          "PhoneExperienceHost", "msedgewebview2", "MoUsoCoreWorker", "TiWorker", "TrustedInstaller"]
 ignore_prefix = ["cosmic-applet", "cosmic-ext-applet", "cosmic-panel", "cosmic-comp", "cosmic-bg",
                  "cosmic-osd", "cosmic-session", "cosmic-settings-daemon", "cosmic-notifications",
                  "cosmic-launcher", "cosmic-app-library", "cosmic-workspaces", "cosmic-idle",
@@ -82,9 +92,11 @@ shield_cost = 5.0         # defensa consumida por rayo bloqueado
 
 # Entornos de desarrollo -> Torre de la Academia (pisos = editores abiertos)
 [dev]
-editors   = ["code", "codium", "nvim", "vim", "emacs", "zed", "zeditor", "hx", "helix", "idea", "pycharm"]
+editors   = ["code", "codium", "nvim", "vim", "emacs", "zed", "zeditor", "hx", "helix", "idea", "pycharm",
+             "Code", "VSCodium", "Cursor", "devenv", "idea64", "pycharm64", "rider64", "notepad++"]
 compilers = ["cc1", "cc1plus", "rustc", "clang", "clang++", "gcc", "g++", "ld", "ld.lld", "mold",
-             "javac", "go", "tsc", "esbuild", "cargo", "ninja", "make", "webpack", "vite"]
+             "javac", "go", "tsc", "esbuild", "cargo", "ninja", "make", "webpack", "vite",
+             "cl", "link", "MSBuild", "csc", "mingw32-make"]
 
 # ---------------------------------------------------------------------------
 # Picos de CPU -> clima

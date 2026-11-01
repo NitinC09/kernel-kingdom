@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-from .. import cli, config, i18n, paths, story, timelapse
+from .. import cli, compat, config, i18n, paths, story, timelapse
 from ..notify import Notifier
 from .inputs import InputActivity
 from .probes import SystemProbe
@@ -24,8 +24,15 @@ def write_atomic(path: Path, data: dict):
     """tmp + rename: el renderer nunca lee un JSON a medio escribir."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False))
-    os.replace(tmp, path)
+    tmp.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:          # Windows: el renderer lo tiene abierto justo ahora
+            if attempt == 19:
+                raise
+            time.sleep(0.025)
 
 
 def take_commands() -> list[dict]:
@@ -34,7 +41,7 @@ def take_commands() -> list[dict]:
     out = []
     for f in sorted(folder.glob("*.json"))[:10] if folder.exists() else []:
         try:
-            out.append(json.loads(f.read_text()))
+            out.append(json.loads(f.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             pass
         f.unlink(missing_ok=True)
@@ -91,10 +98,7 @@ def main():
             print(time.strftime("%d/%m %H:%M", time.localtime(e["t"])), e["text"])
         return
 
-    try:
-        os.nice(cfg["daemon"]["nice"])
-    except OSError:
-        pass
+    compat.lower_priority(cfg["daemon"]["nice"])
 
     probe = SystemProbe(cfg)
     inputs = InputActivity()
@@ -128,6 +132,8 @@ def main():
         snap = probe.sample()
         snap["input"] = inputs.take(snap["dt"] or interval)
         commands = take_commands()
+        if any(c.get("action") == "quit" for c in commands):   # `kernel-kingdom stop` en Windows
+            break
         if any(c.get("action") == "new_world" for c in commands):
             world = new_world(world, cfg)
             commands = []

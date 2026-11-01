@@ -79,7 +79,7 @@ def _texture(surf) -> Gdk.Texture:
 
 def _prefs() -> dict:
     try:
-        return json.loads((paths.data_dir() / "prefs.json").read_text())
+        return json.loads((paths.data_dir() / "prefs.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -88,7 +88,7 @@ def _save_prefs(**kw):
     prefs = _prefs() | kw
     f = paths.data_dir() / "prefs.json"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(prefs))
+    f.write_text(json.dumps(prefs), encoding="utf-8")
 
 
 def _find_monitor(spec: str) -> Gdk.Monitor | None:
@@ -133,7 +133,19 @@ class Wallpaper:
         self.win.connect("realize", self._on_realize)
 
         self.layered = not args.windowed and LayerShell is not None and LayerShell.is_supported()
-        if self.layered:
+        self.desktop = None                            # Windows: la ventana va detrás de los íconos
+        self._leaving = False                          # salida a propósito (no relanzar)
+        self.monitor_arg = args.monitor
+        if not args.windowed and sys.platform == "win32":
+            from .win_desktop import DesktopHost
+            self.desktop = DesktopHost(args.monitor)
+            self.layered = True
+        if self.desktop:
+            self.win.set_child(self.view)
+            self.win.set_decorated(False)
+            self.win.set_title(self.desktop.title)     # así la encuentra win_desktop
+            self.win.set_default_size(*self.desktop.logical_size)
+        elif self.layered:
             self.win.set_child(self.view)
             LayerShell.init_for_window(self.win)
             LayerShell.set_namespace(self.win, "kernel-kingdom")
@@ -181,7 +193,10 @@ class Wallpaper:
             self.view.add_controller(motion)
 
         self.occl = None
-        if self.layered and not args.no_occlusion:
+        if self.desktop and not args.no_occlusion:
+            self.occl = self.desktop.occlusion(rc["coverage"])
+            GLib.timeout_add_seconds(1, self._poll_win_occlusion)
+        elif self.layered and not args.no_occlusion:
             try:
                 self.occl = OcclusionWatcher(rc["coverage"])
                 chan = GLib.IOChannel.unix_new(self.occl.fileno())
@@ -197,6 +212,9 @@ class Wallpaper:
         if self.start_mini:
             self.win.set_default_size(480, 300)          # antes de mostrarla: así sí arranca chiquita
         self.win.present()
+        if self.desktop:
+            self._attach_tries = 0
+            GLib.timeout_add(100, self._attach_desktop)
         self._resume()
         if not self.layered:
             GLib.idle_add(self._first_run)
@@ -338,7 +356,8 @@ class Wallpaper:
         prefs = _prefs()
         if self.start_mini:
             self._set_mini(True)
-        if not prefs.get("wallpaper_asked"):
+        from ..compat import WALLPAPER
+        if not prefs.get("wallpaper_asked") and WALLPAPER:
             self.painter.show_dialog(ui("dialog.wp.title"),
                                      [(ui("dialog.wp.yes"), "wp_yes"), (ui("dialog.wp.no"), "wp_no")],
                                      ui("dialog.wp.note"))
@@ -720,6 +739,52 @@ class Wallpaper:
             self._resume()
             return GLib.SOURCE_REMOVE
 
+    # -- Windows: colgarse del escritorio y vigilarlo ---------------------------
+
+    def _attach_desktop(self):
+        try:
+            self.desktop.attach()
+        except OSError as e:
+            self._attach_tries += 1
+            if self._attach_tries < 50:                # hasta ~5 s: GTK puede tardar en crear la ventana
+                return GLib.SOURCE_CONTINUE
+            log(f"no se pudo poner de fondo: {e}")
+            self._leaving = True
+            self.win.get_application().quit()
+            return GLib.SOURCE_REMOVE
+        log(f"fondo de pantalla en el monitor {self.desktop.index} {self.desktop.size[0]}x{self.desktop.size[1]}")
+        GLib.timeout_add_seconds(2, self._watch_desktop)
+        return GLib.SOURCE_REMOVE
+
+    def _watch_desktop(self):
+        try:
+            status = self.desktop.check()
+        except OSError as e:
+            log(f"escritorio: {e}")
+            return GLib.SOURCE_CONTINUE
+        if status == "ok":
+            return GLib.SOURCE_CONTINUE
+        if status == "lost":                           # Explorer se reinició: relanzarse cuando vuelva
+            self.relaunch_desktop()
+        else:
+            log("el monitor ya no está")
+        self._leaving = True
+        self.win.get_application().quit()
+        return GLib.SOURCE_REMOVE
+
+    def relaunch_desktop(self):
+        """Explorer se reinició y se llevó nuestra ventana: otro proceso igual, cuando vuelva."""
+        log("Explorer se reinició: relanzando el fondo")
+        self._leaving = True
+        from .. import cli
+        m = self.monitor_arg or str(self.desktop.index)
+        cli._detach(f"render-{m}", "reino.render", "--monitor", m, "--start-delay", "4")
+
+    def _poll_win_occlusion(self):
+        if self.occl and self.desktop.hwnd and self.occl.poll():
+            self._apply_occlusion()
+        return GLib.SOURCE_CONTINUE
+
     def _apply_occlusion(self):
         if self.occl.covered and not self.paused:
             self._pause()
@@ -779,7 +844,7 @@ class Wallpaper:
             mtime = self.state_path.stat().st_mtime_ns
             if mtime != self._mtime:
                 self._mtime = mtime
-                self.painter.set_state(json.loads(self.state_path.read_text()), time.monotonic())
+                self.painter.set_state(json.loads(self.state_path.read_text(encoding="utf-8")), time.monotonic())
                 if self._fps == 0 and not self.paused:   # idle_fps = 0: pintar solo al cambiar
                     self._render()
                     self._schedule(self._wanted_fps())
@@ -847,6 +912,21 @@ def run(args, cfg: dict):
         else:
             holder["wp"] = Wallpaper(a, args, cfg)
     app.connect("activate", activate)
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, app.quit)
+    if sys.platform == "win32" and not args.windowed:     # al salir, que Windows repinte su fondo
+        def shutdown(_a):
+            from .win_desktop import refresh_wallpaper
+            wp = holder.get("wp")
+            if wp and wp.desktop and wp.desktop.hwnd and not wp._leaving and not wp.desktop.alive():
+                wp.relaunch_desktop()                  # GTK cerró antes de que lo notara el vigía
+            try:
+                refresh_wallpaper()
+            except OSError:
+                pass
+        app.connect("shutdown", shutdown)
+    if hasattr(GLib, "unix_signal_add"):
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, app.quit)
+    else:                                   # Windows: handler de Python + un tic para que corra
+        signal.signal(signal.SIGINT, lambda *_: GLib.idle_add(app.quit))
+        GLib.timeout_add(500, lambda: GLib.SOURCE_CONTINUE)
     app.run([])

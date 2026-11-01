@@ -272,7 +272,7 @@ class World:
     @classmethod
     def load_or_new(cls, cfg: dict, path: Path) -> "World":
         try:
-            return cls(cfg, json.loads(path.read_text()))
+            return cls(cfg, json.loads(path.read_text(encoding="utf-8")))
         except (OSError, ValueError, KeyError):
             return cls(cfg)
 

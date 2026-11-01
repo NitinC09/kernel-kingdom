@@ -21,6 +21,7 @@ import cairo
 
 from .. import buildings as B
 from .. import i18n
+from ..compat import WALLPAPER
 from ..i18n import ui, words
 
 TW, TH = 16, 8                       # rombo de casilla 2:1
@@ -90,8 +91,14 @@ def season_for(month: int, hemisphere: str) -> str:
 
 def hemisphere_auto() -> str:
     tz = os.path.realpath("/etc/localtime")
+    if os.name == "nt":                     # Windows no tiene /etc/localtime: nombre de la zona
+        import time
+        tz = " ".join(time.tzname)
     south = ("Argentina", "Montevideo", "Santiago", "Asuncion", "Sao_Paulo", "Australia", "Auckland",
-             "Johannesburg", "Lima", "La_Paz", "Punta_Arenas")
+             "Johannesburg", "Lima", "La_Paz", "Punta_Arenas",
+             # nombres de zona de Windows
+             "AUS ", "Cen. Australia", "E. Australia", "W. Australia", "Tasmania", "New Zealand",
+             "E. South America", "Pacific SA", "Paraguay", "South Africa", "Magallanes")
     return "sur" if any(s in tz for s in south) else "norte"
 
 
@@ -1985,7 +1992,8 @@ class Painter:
         else:
             from .. import __version__
             add(f"  {ui('menu.check_update', version=__version__)}", TEXT, ("check_update",))
-        add(f"  [{'x' if self.wallpaper_on else ' '}] {ui('menu.wallpaper')}", TEXT, ("wallpaper",))
+        if WALLPAPER:
+            add(f"  [{'x' if self.wallpaper_on else ' '}] {ui('menu.wallpaper')}", TEXT, ("wallpaper",))
         add(f"  {ui('menu.share')}", TEXT, ("share",))
         add(f"  {ui('menu.timelapse')}", TEXT, ("timelapse",))
         add(f"  {ui('menu.language')}", TEXT, ("language",))
