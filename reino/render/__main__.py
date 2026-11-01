@@ -112,7 +112,10 @@ def main():
         time.sleep(args.start_delay)
     if not args.windowed:
         _ensure_layer_shell_preload()
-    from .app import run
+    if sys.platform == "win32" or os.environ.get("KK_BACKEND") == "sdl":   # Windows: pygame-ce (SDL2), sin GTK
+        from .sdl_app import run
+    else:
+        from .app import run
     run(args, cfg)
 
 

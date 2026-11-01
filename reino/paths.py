@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "default_config.toml"
 
 
-# Windows: la variable XDG manda si existe (MSYS2); si no, carpetas nativas
+# Windows: la variable XDG manda si alguien la definió; si no, carpetas nativas
 # (config en %APPDATA%\kernel-kingdom, mundo y datos en %LOCALAPPDATA%\kernel-kingdom).
 _WIN = {"XDG_CONFIG_HOME": ("APPDATA", "Roaming"), "XDG_STATE_HOME": ("LOCALAPPDATA", "Local"),
         "XDG_DATA_HOME": ("LOCALAPPDATA", "Local")}

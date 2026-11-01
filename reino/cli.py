@@ -467,13 +467,21 @@ def cmd_doctor(args):
         check("psutil", True)
     except ImportError:
         check("psutil", False, "pip install psutil")
-    try:
-        import cairo  # noqa: F401
-        import gi
-        gi.require_version("Gtk", "4.0")
-        check("PyGObject + GTK 4 + pycairo", True)
-    except (ImportError, ValueError):
-        check("PyGObject + GTK 4 + pycairo", False, _deps_hint())
+    if WINDOWS:                                    # sin GTK: pygame-ce (SDL2) + pycairo
+        try:
+            import cairo  # noqa: F401
+            import pygame  # noqa: F401
+            check("pycairo + pygame-ce", True)
+        except ImportError:
+            check("pycairo + pygame-ce", False, _deps_hint())
+    else:
+        try:
+            import cairo  # noqa: F401
+            import gi
+            gi.require_version("Gtk", "4.0")
+            check("PyGObject + GTK 4 + pycairo", True)
+        except (ImportError, ValueError):
+            check("PyGObject + GTK 4 + pycairo", False, _deps_hint())
     if WINDOWS:
         from .compat import idle_seconds
         from .render import win_desktop
@@ -516,8 +524,7 @@ def cmd_doctor(args):
 
 def _deps_hint() -> str:
     if WINDOWS:
-        return ("install.ps1, or in the MSYS2 UCRT64 terminal (https://www.msys2.org): pacman -S "
-                "mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-python-gobject mingw-w64-ucrt-x86_64-python-psutil")
+        return f'"{sys.executable}" -m pip install pycairo pygame-ce psutil   (or run install.ps1 again)'
     osr = Path("/etc/os-release").read_text() if Path("/etc/os-release").exists() else ""
     if "ostree" in osr or Path("/run/ostree-booted").exists():
         return "rpm-ostree install python3-gobject gtk4 gtk4-layer-shell  (y reiniciá)"

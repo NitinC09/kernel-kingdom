@@ -18,23 +18,9 @@ WALLPAPER = LINUX or WINDOWS   # Linux: layer-shell de Wayland. Windows: la capa
 
 
 def bootstrap():
-    """Windows + MSYS2: GTK carga sus DLL por PATH. Un venv (o un acceso directo del menú
-    Inicio) no hereda la carpeta del Python base, así que se agrega antes de `import gi`."""
+    """Windows: que ✔ ✘ y las tildes no rompan una consola cp1252."""
     if not WINDOWS:
         return
-    dirs = []
-    for exe in (getattr(sys, "_base_executable", None), sys.executable):
-        if exe and os.path.dirname(exe) not in dirs:
-            dirs.append(os.path.dirname(exe))
-    path = os.environ.get("PATH", "")
-    missing = [d for d in dirs if d and d.lower() not in path.lower()]
-    if missing:
-        os.environ["PATH"] = os.pathsep.join([*missing, path])
-    for d in dirs:
-        try:
-            os.add_dll_directory(d)
-        except (OSError, AttributeError):
-            pass
     for stream in (sys.stdout, sys.stderr):          # ✔ ✘ y tildes en la consola cp1252
         try:
             stream.reconfigure(errors="replace")
@@ -156,3 +142,30 @@ def make_shortcut(lnk: Path, target: str, args: str = "", icon: str = "", workdi
               + "$s.Save()")
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                    check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+def pictures_dir() -> Path:
+    """Carpeta Imágenes del usuario (en Windows puede estar en OneDrive o movida)."""
+    if WINDOWS:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("data", ctypes.c_byte * 16)]
+        guid = GUID()
+        ctypes.memmove(guid.data, uuid.UUID("33E28130-4E1E-4676-835A-98395C3BC3BB").bytes_le, 16)
+        out = ctypes.c_wchar_p()
+        fn = ctypes.windll.shell32.SHGetKnownFolderPath
+        fn.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
+        if fn(ctypes.byref(guid), 0, None, ctypes.byref(out)) == 0 and out.value:
+            path = Path(out.value)
+            ctypes.windll.ole32.CoTaskMemFree(out)
+            return path
+    try:
+        out = subprocess.run(["xdg-user-dir", "PICTURES"], capture_output=True, text=True, timeout=2).stdout.strip()
+        if out and out != str(Path.home()):
+            return Path(out)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return Path.home() / "Pictures"
