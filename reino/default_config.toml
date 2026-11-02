@@ -21,10 +21,12 @@ seed = 0              # 0 = una isla al azar (se guarda); cualquier otro número
 # (renderers, GPU, utility...) se suman a la facción.
 [browsers]
 chrome   = ["chrome", "chromium", "chromium-browse", "google-chrome", "chrome_crashpad"]
-firefox  = ["firefox", "firefox-bin"]
+firefox  = ["firefox", "firefox-bin", "floorp", "librewolf", "waterfox", "mercury"]
 zen      = ["zen", "zen-bin"]
 brave    = ["brave", "brave-browser"]
 edge     = ["msedge"]
+opera    = ["opera", "opera_gx"]
+vivaldi  = ["vivaldi"]
 electron = ["vesktop", "vesktop.bin", "Discord", "discord", "slack", "obsidian", "electron"]
 
 [browsers_rules]
@@ -42,6 +44,8 @@ firefox  = [240, 138, 36]
 zen      = [142, 108, 216]
 brave    = [242, 95, 28]
 edge     = [38, 166, 154]
+opera    = [204, 30, 70]
+vivaldi  = [239, 57, 57]
 electron = [91, 141, 239]
 
 # Otras apps pesadas que no son navegadores -> aldeas con un edificio emblema

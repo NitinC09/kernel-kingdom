@@ -137,6 +137,7 @@ class SdlView(Controller):
         self._ui_cache = None                        # CPU: interfaz ya escalada
         self._mouse_down = None
         self._last_click = (0.0, 0, 0)
+        self._frames = 0
 
         if self.desktop:
             if not args.no_occlusion:
@@ -179,6 +180,7 @@ class SdlView(Controller):
         self._layers[slot] = (tex, scale)
 
     def show_frame(self, world, world_scale, ui_surf, ui_scale, ui_changed):
+        self._frames += 1
         self._upload(0, world, world_scale, 0)                     # SDL_BLENDMODE_NONE: opaco
         if ui_changed or self._layers[1] is None or self._layers[1][1] != ui_scale:
             self._upload(1, ui_surf, ui_scale, PREMULTIPLIED)
@@ -387,15 +389,30 @@ class SdlView(Controller):
             self.leave()
 
     def run(self):
+        """Eventos + temporizadores. No se usa SDL_WaitEventTimeout: con la ventana colgada del
+        escritorio de Explorer (otro proceso) no despertaba por tiempo en Windows y el fondo se
+        congelaba hasta el próximo evento, que detrás de los íconos casi nunca llega. Se duerme
+        con time.sleep en tramos cortos: el fondo no recibe entrada, así que 50 ms sobran; la
+        ventana usa 10 ms para que el mouse responda al instante. Despertar cuesta ~nada."""
+        step = 0.05 if self.layered else 0.01
+        self.every(60_000, self._heartbeat)
         while self.loop.running:
             self.loop.run_due()
             if not self.loop.running:
                 break
-            ev = pygame.event.wait(self.loop.timeout_ms())
-            while ev.type != pygame.NOEVENT:
+            for ev in pygame.event.get():
                 if ev.type != WAKE:
                     self._on_event(ev)
-                ev = pygame.event.poll()
+            wait = self.loop.timeout_ms() / 1000
+            if wait > 0:
+                time.sleep(min(wait, step))
+
+    def _heartbeat(self):
+        """Una línea por minuto en el log: si el fondo 'se congela', acá se ve si sigue dibujando."""
+        log(f"vivo: {self._frames} frames en el último minuto, fps objetivo {self._fps}"
+            f"{', PAUSADO (' + str(self.occl.culprit) + ')' if self.paused and self.occl else ''}")
+        self._frames = 0
+        return CONTINUE
 
 
 def _already_open() -> bool:
