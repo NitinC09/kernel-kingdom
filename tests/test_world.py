@@ -3,11 +3,11 @@ import copy
 import json
 import unittest
 
-from reino import buildings as B
-from reino import config, i18n
-from reino.daemon.probes import SystemProbe
-from reino.daemon.world import FOREST, GRASS, LAND, WATER, World
-from reino.render.occlusion import _coverage
+from kingdom import buildings as B
+from kingdom import config, i18n
+from kingdom.daemon.probes import SystemProbe
+from kingdom.daemon.world import FOREST, GRASS, LAND, WATER, World
+from kingdom.render.occlusion import _coverage
 
 
 def snap(**over) -> dict:
@@ -34,9 +34,9 @@ def fortress(kind: str, name: str, uptime: float) -> dict:
 class WorldTest(unittest.TestCase):
     def setUp(self):
         self.cfg = config.load()
-        self.cfg["world"]["seed"] = 1337      # isla fija para que los tests sean reproducibles
+        self.cfg["world"]["seed"] = 1337      # fixed island so the tests are reproducible
         self.world = World(self.cfg)
-        self.world.rng.seed(0)                # y azar fijo (exploradores, rayos...)
+        self.world.rng.seed(0)                # and fixed randomness (explorers, lightning...)
 
     def run_ticks(self, n: int, s: dict) -> list[dict]:
         events = []
@@ -56,7 +56,7 @@ class WorldTest(unittest.TestCase):
         n = self.world.n
         border = [self.world.terrain[i] for i in range(n)] + [self.world.terrain[(n - 1) * n + i] for i in range(n)]
         self.assertGreater(border.count(WATER) / len(border), 0.9)
-        # la isla es más ancha que alta en pantalla (x - y = horizontal, x + y = vertical)
+        # the island is wider than tall on screen (x - y = horizontal, x + y = vertical)
         land = [divmod(i, n) for i, t in enumerate(self.world.terrain) if t != WATER]
         width = max(x - y for y, x in land) - min(x - y for y, x in land)
         height = max(x + y for y, x in land) - min(x + y for y, x in land)
@@ -67,41 +67,41 @@ class WorldTest(unittest.TestCase):
         f = self.world.factions["chrome"]
         self.assertEqual(f["tiles"], 50)
         self.assertTrue(all(self.world.terrain[i] in LAND for i, o in enumerate(self.world.owner) if o))
-        self.assertIn("fundacion", self.kinds())
+        self.assertIn("founding", self.kinds())
         self.assertIn("Cromaria", f["display"])
-        self.run_ticks(5, snap())  # se cerró el navegador
+        self.run_ticks(5, snap())  # the browser was closed
         self.assertLess(self.world.factions["chrome"]["tiles"], 50)
         self.assertGreater(sum(1 for r in self.world.ruin if r), 0)
-        self.assertIn("caida", self.kinds())
+        self.assertIn("fall", self.kinds())
 
     def test_reopened_app_is_reborn_elsewhere(self):
         s = snap(browsers={"chrome": proc(2000), "zen": proc(1500)})
         self.run_ticks(30, s)
         f = self.world.factions["chrome"]
         old_cap = list(f["capital"])
-        self.run_ticks(3, snap(browsers={"zen": proc(1500)}))       # se cerró chrome: el reino cae
+        self.run_ticks(3, snap(browsers={"zen": proc(1500)}))       # chrome was closed: the realm falls
         self.assertFalse(f["alive"])
-        self.run_ticks(1, s)                                          # y volvió
+        self.run_ticks(1, s)                                          # and it came back
         self.assertTrue(f["alive"])
         self.assertGreaterEqual(self.world._dist(self.world.idx(*f["capital"]), old_cap), 14)
         mine = [i for i, o in enumerate(self.world.owner) if o == f["id"]]
-        self.assertTrue(all(self.world._dist(i, old_cap) >= 10 for i in mine))   # nada junto a las ruinas
+        self.assertTrue(all(self.world._dist(i, old_cap) >= 10 for i in mine))   # nothing next to the ruins
         self.assertGreater(self.world.ruin[self.world.idx(*old_cap)], 0)
         self.assertIn("dyn.reborn", [e.get("k") for e in self.world.chronicle.entries])
         self.run_ticks(30, s)
-        self.assertGreater(f["tiles"], 0)                             # la ciudad nueva crece allá
+        self.assertGreater(f["tiles"], 0)                             # the new city grows over there
 
     def test_restart_is_a_new_dynasty(self):
         self.run_ticks(3, snap(browsers={"zen": proc(1000, since=100)}))
-        self.run_ticks(1, snap(browsers={"zen": proc(1000, since=900)}))   # el proceso raíz cambió
+        self.run_ticks(1, snap(browsers={"zen": proc(1000, since=900)}))   # the root process changed
         self.assertEqual(self.world.factions["zen"]["dynasty"], 2)
-        self.assertEqual(sum(e["kind"] == "dinastia" for e in self.world.chronicle.entries), 1)
+        self.assertEqual(sum(e["kind"] == "dynasty" for e in self.world.chronicle.entries), 1)
 
     def test_heavy_app_founds_hamlet_with_landmark(self):
         self.run_ticks(5, snap(apps={"claude": proc(400, procs=1)}))
         f = self.world.factions["claude"]
         self.assertEqual(f["kind"], "app")
-        self.assertEqual(f["landmark"], "oraculo")
+        self.assertEqual(f["landmark"], "oracle")
         self.assertLessEqual(f["target"], self.cfg["apps"]["max_tiles"])
         self.assertIn("Claudel", self.texts())
 
@@ -121,7 +121,7 @@ class WorldTest(unittest.TestCase):
         self.world = World(cfg)
         self.run_ticks(20, snap(browsers={"b": proc(8000)}))
         b_full = self.world.factions["b"]["tiles"]
-        # "a" quiere toda la isla; crece por su perímetro y al quedarse sin tierra libre invade a "b"
+        # "a" wants the whole island; it grows along its perimeter and when it runs out of free land it invades "b"
         events = self.run_ticks(150, snap(browsers={"a": proc(10 ** 6), "b": proc(8000)}))
         self.assertTrue(any(e["type"] == "conquest" for e in events))
         self.assertLess(self.world.factions["b"]["tiles"], b_full)
@@ -129,7 +129,7 @@ class WorldTest(unittest.TestCase):
     def test_fortress_is_stable_builds_walls_and_roads(self):
         s = snap(browsers={"chrome": proc(1000)}, fortresses={"container:db": fortress("container", "db", 30)})
         self.run_ticks(1, s)
-        self.assertNotIn("container:db", self.world.structures)  # aún no cumple min_uptime
+        self.assertNotIn("container:db", self.world.structures)  # min_uptime not reached yet
         s["fortresses"]["container:db"]["uptime"] = 4000
         self.run_ticks(1, s)
         st = self.world.structures["container:db"]
@@ -138,7 +138,7 @@ class WorldTest(unittest.TestCase):
         self.assertGreater(sum(self.world.wall), 0)
         self.assertGreater(sum(self.world.road), 0)                # camino capital <-> castillo
         self.assertFalse(any(w and r for w, r in zip(self.world.wall, self.world.road)))  # puertas
-        self.run_ticks(3, snap())  # el contenedor se detuvo -> ruina, mismo lugar
+        self.run_ticks(3, snap())  # the container stopped -> ruin, same place
         self.assertFalse(st["alive"])
         self.run_ticks(1, s)
         self.assertEqual((st["x"], st["y"]), pos)
@@ -157,7 +157,7 @@ class WorldTest(unittest.TestCase):
     def test_fortress_shield_blocks_lightning(self):
         s = snap(cpu=99.0, fortresses={"daemon:sshd": fortress("daemon", "sshd", 5000)})
         self.world.resources["defense"] = 1000
-        self.world.cfg["fortresses"]["shield_radius"] = 99  # escudo cubre todo el mapa
+        self.world.cfg["fortresses"]["shield_radius"] = 99  # the shield covers the whole map
         events = self.run_ticks(15, s)
         kinds = {e["type"] for e in events}
         self.assertIn("shield", kinds)
@@ -176,9 +176,9 @@ class WorldTest(unittest.TestCase):
 
     def test_afk_and_return(self):
         self.run_ticks(1, snap(input={"source": "idle", "active": 0.0, "idle_for": 900}))
-        self.assertIn("soberano", self.kinds())
+        self.assertIn("sovereign", self.kinds())
         self.run_ticks(1, snap(t=1_001_000.0, input={"source": "idle", "active": 1.0, "idle_for": 0}))
-        self.assertEqual(self.kinds().count("soberano"), 2)
+        self.assertEqual(self.kinds().count("sovereign"), 2)
 
     def test_reboot_starts_new_era(self):
         self.run_ticks(1, snap(boot=1000))
@@ -193,12 +193,12 @@ class WorldTest(unittest.TestCase):
         for b in (B.PALACE, B.PLAZA, B.STREET, B.HOUSE, B.MARKET, B.TEMPLE, B.BARRACKS):
             self.assertIn(b, mine, B.NAMES[b])
         self.assertTrue(set(mine) & {B.FARM, B.PASTURE, B.BARN, B.DOCK, B.LUMBER})   # afueras
-        # no todo son torres: la mayoría de las casas son bajas
+        # not everything is towers: most houses are low
         houses = [self.world.level[i] for i, o in enumerate(self.world.owner)
                   if o == f["id"] and self.world.bld[i] == B.HOUSE]
         self.assertGreater(sum(1 for lv in houses if lv <= 2), len(houses) / 2)
-        self.assertIn("cult", f)                     # templo -> religión
-        self.assertIn("obra", self.kinds())
+        self.assertIn("cult", f)                     # temple -> religion
+        self.assertIn("works", self.kinds())
 
     def test_war_gets_a_name_and_ends_in_peace(self):
         cfg = copy.deepcopy(self.cfg)
@@ -206,9 +206,9 @@ class WorldTest(unittest.TestCase):
         self.world = World(cfg)
         self.run_ticks(20, snap(browsers={"b": proc(8000)}))
         self.run_ticks(150, snap(browsers={"a": proc(10 ** 6), "b": proc(8000)}))
-        self.assertIn("guerra", self.kinds())
-        self.run_ticks(160, snap(browsers={"a": proc(1000), "b": proc(1000)}))   # se calman
-        self.assertIn("paz", self.kinds())
+        self.assertIn("war", self.kinds())
+        self.run_ticks(160, snap(browsers={"a": proc(1000), "b": proc(1000)}))   # they calm down
+        self.assertIn("peace", self.kinds())
         self.assertEqual(self.world.wars, {})
 
     def test_ssh_session_brings_an_embassy(self):
@@ -216,15 +216,15 @@ class WorldTest(unittest.TestCase):
         self.run_ticks(2, snap(sessions=[session], visits={"100.1.2.3": 7}))
         st = self.world.structures["embassy:100.1.2.3"]
         self.assertTrue(st["alive"])
-        self.assertIn("visita", self.kinds())
+        self.assertIn("visit", self.kinds())
         self.run_ticks(2, snap(sessions=[]))
         self.assertFalse(st["alive"])
-        self.assertEqual(self.kinds().count("visita"), 2)
+        self.assertEqual(self.kinds().count("visit"), 2)
 
     def test_heroes_are_born_and_die(self):
         self.run_ticks(40, snap(browsers={"chrome": proc(3000)}))
         rnd = self.world.rng.random
-        self.world.rng.random = lambda: 0.0            # forzar un nacimiento (en la vida real, cada tanto)
+        self.world.rng.random = lambda: 0.0            # force a birth (in real life, every now and then)
         self.run_ticks(1, snap(browsers={"chrome": proc(3000)}))
         self.world.rng.random = rnd
         self.assertTrue(self.world.notables)
@@ -249,14 +249,14 @@ class WorldTest(unittest.TestCase):
         a, b = World(cfg), World(cfg)
         self.assertNotEqual(a.seed, b.seed)
         self.assertNotEqual(a.terrain, b.terrain)
-        again = World(cfg, json.loads(json.dumps(a.to_dict())))   # la semilla se guarda
+        again = World(cfg, json.loads(json.dumps(a.to_dict())))   # the seed is saved
         self.assertEqual(again.seed, a.seed)
 
     def test_forests_grow_and_lumber_camps_cut(self):
         before = self.world.terrain.count(FOREST)
         self.run_ticks(150, snap())
         self.assertGreater(self.world.terrain.count(FOREST), before)
-        # un incendio se lleva el bosque: queda pradera
+        # a fire takes the forest: meadow remains
         i = self.world.terrain.index(FOREST)
         self.world.burn[i] = 1
         self.run_ticks(1, snap())
@@ -267,23 +267,23 @@ class WorldTest(unittest.TestCase):
         f = self.world.factions["chrome"]
         x, y = f["capital"]
         self.world.resources.update(mana=0)
-        self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "rayo", "x": x, "y": y}])
-        self.assertFalse(self.world.power_log[-1]["ok"])               # no alcanza el maná
+        self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "lightning", "x": x, "y": y}])
+        self.assertFalse(self.world.power_log[-1]["ok"])               # not enough mana
         self.world.resources.update(mana=100, gold=200, stone=50)
-        ev = self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "rayo", "x": x, "y": y}])
+        ev = self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "lightning", "x": x, "y": y}])
         self.assertTrue(self.world.power_log[-1]["ok"])
         self.assertTrue(any(e["type"] == "lightning" for e in ev))
-        self.assertAlmostEqual(self.world.resources["mana"], 95, delta=0.5)   # +un poco por actividad
-        self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "fiesta", "x": 0, "y": 0}])
-        self.assertFalse(self.world.power_log[-1]["ok"])               # el mar no es un reino
-        self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "fiesta", "x": x, "y": y}])
+        self.assertAlmostEqual(self.world.resources["mana"], 95, delta=0.5)   # +a bit from activity
+        self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "festival", "x": 0, "y": 0}])
+        self.assertFalse(self.world.power_log[-1]["ok"])               # the sea isn't a realm
+        self.world.step(snap(browsers={"chrome": proc(2000)}), [{"power": "festival", "x": x, "y": y}])
         self.assertGreater(f["festival"], self.world.tick)
         coast = next(i for i, t in enumerate(self.world.terrain) if t in LAND and self.world._wild(i)
                      and any(self.world.terrain[j] == WATER for j in self.world.neighbors(i)))
         self.world.step(snap(browsers={"chrome": proc(2000)}),
-                        [{"power": "faro", "x": coast % self.world.n, "y": coast // self.world.n}])
+                        [{"power": "lighthouse", "x": coast % self.world.n, "y": coast // self.world.n}])
         self.assertTrue(any(s["kind"] == "lighthouse" for s in self.world.structures.values()))
-        self.assertIn("poder", self.kinds())
+        self.assertIn("power", self.kinds())
 
     def test_wonder_is_built_and_each_costs_more(self):
         s = snap(browsers={"chrome": proc(3000)})
@@ -292,16 +292,16 @@ class WorldTest(unittest.TestCase):
         f = w.factions["chrome"]
         cap = w.idx(*f["capital"])
         i = next(j for j, o in enumerate(w.owner) if o == f["id"] and j != cap and not w.burn[j])
-        first = w.power_costs()["maravilla"]["gold"]
+        first = w.power_costs()["wonder"]["gold"]
         w.resources.update(gold=10000, stone=1000)
-        w.step(s, [{"power": "maravilla", "x": i % w.n, "y": i // w.n}])
+        w.step(s, [{"power": "wonder", "x": i % w.n, "y": i // w.n}])
         self.assertTrue(w.power_log[-1]["ok"], w.power_log[-1])
         wonder = next(x for x in w.structures.values() if x["kind"] == "wonder")
         self.assertTrue(wonder["building"])
         self.assertAlmostEqual(w.resources["gold"], 10000 - first, delta=5)
-        self.assertGreater(w.power_costs()["maravilla"]["gold"], first)
+        self.assertGreater(w.power_costs()["wonder"]["gold"], first)
         self.run_ticks(200, s)
-        self.assertFalse(wonder["building"])                            # los obreros la terminaron
+        self.assertFalse(wonder["building"])                            # the workers finished it
         self.assertTrue(wonder["alive"])
 
     def test_dragon_burns_and_leaves(self):
@@ -314,7 +314,7 @@ class WorldTest(unittest.TestCase):
         self.assertTrue(w.power_log[-1]["ok"])
         self.assertIsNotNone(w.dragon)
         w.step(s, [{"power": "dragon", "x": x, "y": y}])
-        self.assertFalse(w.power_log[-1]["ok"])                         # un dragón por vez
+        self.assertFalse(w.power_log[-1]["ok"])                         # one dragon at a time
         burned = 0
         for _ in range(50):
             w.step(s)
@@ -328,11 +328,11 @@ class WorldTest(unittest.TestCase):
         w = self.world
         a, b = w.factions["chrome"], w.factions["firefox"]
         w.resources.update(defense=1000, stone=500, gold=1000)
-        w.step(s, [{"power": "murallas", "x": a["capital"][0], "y": a["capital"][1]}])
+        w.step(s, [{"power": "walls", "x": a["capital"][0], "y": a["capital"][1]}])
         self.assertEqual(a["walled"], list(a["capital"]))
         w._declare_war(a, b)
         self.assertTrue(w.wars)
-        w.step(s, [{"power": "tregua", "x": b["capital"][0], "y": b["capital"][1]}])
+        w.step(s, [{"power": "truce", "x": b["capital"][0], "y": b["capital"][1]}])
         self.assertTrue(w.power_log[-1]["ok"])
         self.assertFalse(w.wars)
         self.assertFalse([e for e in w.expeditions if e["kind"] == "army"])
@@ -348,7 +348,7 @@ class WorldTest(unittest.TestCase):
         self.assertGreaterEqual(len(w.regions), 6)
         self.assertTrue(all(w.region[i] >= 0 for i, t in enumerate(w.terrain) if t != WATER))
         names = [r["name"] for r in w.regions]
-        self.assertEqual(len(names), len(set(names)))                     # sin nombres repetidos
+        self.assertEqual(len(names), len(set(names)))                     # no repeated names
         i = next(i for i, t in enumerate(w.terrain) if t in LAND)
         self.assertIn(w._place_at(i), names)
         saved = w.to_dict()
@@ -363,12 +363,12 @@ class WorldTest(unittest.TestCase):
         coast = next(i for i, t in enumerate(self.world.terrain) if t in LAND and self.world._wild(i)
                      and any(self.world.terrain[j] == WATER for j in self.world.neighbors(i)))
         x, y = coast % self.world.n, coast // self.world.n
-        self.world.step(copy.deepcopy(s), [{"power": "faro", "x": x, "y": y}])
+        self.world.step(copy.deepcopy(s), [{"power": "lighthouse", "x": x, "y": y}])
         lh = self.world.structures[f"lighthouse:{x}:{y}"]
         exp = self.world.expeditions[-1]
         self.assertTrue(lh["building"])
         self.assertEqual(exp["kind"], "build")
-        self.assertEqual(exp["path"][-1], coast)               # caminan desde la capital hasta la costa
+        self.assertEqual(exp["path"][-1], coast)               # they walk from the capital to the coast
         self.run_ticks(exp["eta"] + exp["work"] + 1, s)
         self.assertFalse(lh["building"])
         self.assertFalse([e for e in self.world.expeditions if e["kind"] == "build"])
@@ -380,9 +380,9 @@ class WorldTest(unittest.TestCase):
         cap = self.world.idx(*self.world.factions["chrome"]["capital"])
         target = next(i for i, t in enumerate(self.world.terrain) if t == GRASS and self.world._wild(i)
                       and self.world._dist(i, self.world.xy(cap)) > 8)
-        self.world.step(copy.deepcopy(s), [{"power": "bosque", "x": target % self.world.n, "y": target // self.world.n}])
+        self.world.step(copy.deepcopy(s), [{"power": "forest", "x": target % self.world.n, "y": target // self.world.n}])
         exp = self.world.expeditions[-1]
-        self.assertEqual(self.world.terrain[target], GRASS)    # todavía no: los druidas están en camino
+        self.assertEqual(self.world.terrain[target], GRASS)    # not yet: the druids are on their way
         self.run_ticks(exp["eta"] + exp["work"] + 1, s)
         self.assertEqual(self.world.terrain[target], FOREST)
 
@@ -390,12 +390,12 @@ class WorldTest(unittest.TestCase):
         s = snap(browsers={"chrome": proc(4000, procs=30)},
                  fortresses={"daemon:sshd": fortress("daemon", "sshd", 5000)})
         self.run_ticks(40, s)
-        self.world.rng.random = lambda: 0.0          # forzar que salgan ya (en la vida real, cada tanto)
+        self.world.rng.random = lambda: 0.0          # force them to leave now (in real life, every now and then)
         self.world._adventures()
         kinds = {e["kind"] for e in self.world.expeditions}
         self.assertIn("explore", kinds)
         self.assertIn("siege", kinds)
-        self.assertIn("expedicion", self.kinds())
+        self.assertIn("expedition", self.kinds())
 
     def test_ambition_war_reshapes_the_map(self):
         s = snap(browsers={"chrome": proc(4000, procs=30), "zen": proc(3500, procs=20)})
@@ -406,12 +406,12 @@ class WorldTest(unittest.TestCase):
         caps = (list(a["capital"]), list(b["capital"]))
         self.run_ticks(600, s)
         keys = [e.get("k") for e in self.world.chronicle.entries]
-        # o chocaron las fronteras (batallas) o marcharon sobre la capital
+        # either the borders clashed (battles) or they marched on the capital
         self.assertTrue({"battle", "exp.siegecity.start"} & set(keys))
 
     def test_story_of_the_day(self):
         import tempfile, os
-        from reino import story
+        from kingdom import story
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["XDG_DATA_HOME"] = tmp
             try:
@@ -421,7 +421,7 @@ class WorldTest(unittest.TestCase):
                 text = md.read_text()
                 self.assertIn(f"# Crónica de {self.world.kingdom}", text)
                 self.assertIn("Cromaria", text)
-                self.assertNotIn("#", txt.read_text())    # el .txt es texto plano, para leer en voz alta
+                self.assertNotIn("#", txt.read_text())    # the .txt is plain text, to read aloud
             finally:
                 del os.environ["XDG_DATA_HOME"]
 
@@ -472,7 +472,7 @@ class ProbeTest(unittest.TestCase):
 
 class CoverageTest(unittest.TestCase):
     def test_tiled_windows_with_gaps_count_as_covered(self):
-        # Dos ventanas en mosaico en 2560x1440 con panel arriba y gaps de 8 px (caso real)
+        # Two tiled windows on 2560x1440 with a top panel and 8 px gaps (real case)
         rects = [(8, 46, 1268, 1386), (1284, 46, 1268, 1386)]
         self.assertGreater(_coverage(rects, 2560, 1440), 0.9)
         self.assertLess(_coverage(rects[:1], 2560, 1440), 0.6)

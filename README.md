@@ -191,15 +191,19 @@ in the `input` group; otherwise only presence/absence is detected.
 
 ## How it works
 
-The Python package is called `reino` (Spanish for *kingdom*; the project started in Spanish).
+The Python package is `kingdom` (it used to be `reino`, Spanish for *kingdom*; the
+project started in Spanish, and a tiny `reino` package still forwards old launchers).
 
 ```
-reino/daemon   samples the system (psutil, `last`, Wayland idle), runs the world,
-               writes state.json to $XDG_RUNTIME_DIR every 2 s
-reino/render   GTK 4 + gtk4-layer-shell; procedural pixel-art sprites (cairo),
-               isometric painter, battles and fires, chronicle, Menu
-reino/wl.py    tiny pure-Python Wayland client (window coverage, idle)
-reino/locales  all text, Spanish and English
+kingdom/daemon               samples the system (psutil, `last`, Wayland/Windows idle), runs the
+                             world, writes state.json to $XDG_RUNTIME_DIR (%TEMP% on Windows) every 2 s
+kingdom/render               procedural pixel-art sprites (cairo), isometric painter, battles and
+                             fires, chronicle, Menu; control.py is the toolkit-free window logic
+  app.py                     Linux host: GTK 4 + gtk4-layer-shell
+  sdl_app.py, win_desktop.py Windows host: pygame-ce (SDL2), wallpaper behind the desktop icons
+kingdom/wl.py                tiny pure-Python Wayland client (window coverage, idle)
+kingdom/locales              all game text, Spanish and English
+kingdom/legacy.py            reads worlds and configs saved before 0.4 (Spanish internal names)
 ```
 
 The world lives in the daemon, so the kingdom keeps evolving even while the

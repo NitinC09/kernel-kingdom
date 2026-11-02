@@ -106,7 +106,7 @@ if (-not $ok) { Die "pip install failed with every Python (are you online?)." }
 # A .cmd shim (not pip's .exe): `kernel-kingdom update` can then replace everything while running.
 $Bin = Join-Path $Prefix 'bin'
 New-Item -ItemType Directory -Force -Path $Bin | Out-Null
-Set-Content -Encoding ASCII -Path (Join-Path $Bin 'kernel-kingdom.cmd') -Value "@`"$VPy`" -m reino %*"
+Set-Content -Encoding ASCII -Path (Join-Path $Bin 'kernel-kingdom.cmd') -Value "@`"$VPy`" -m kingdom %*"
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not (($UserPath -split ';') -contains $Bin)) {
   [Environment]::SetEnvironmentVariable('Path', (@($UserPath, $Bin) | Where-Object { $_ }) -join ';', 'User')

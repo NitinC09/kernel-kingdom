@@ -192,15 +192,19 @@ esté en el grupo `input`; si no, solo se detecta si estás presente o ausente.
 
 ## Cómo está hecho
 
-El paquete de Python se llama `reino` (el proyecto nació en castellano).
+El paquete de Python se llama `kingdom` (antes `reino`: el proyecto nació en castellano;
+un paquete `reino` mínimo sigue reenviando a los lanzadores viejos).
 
 ```
-reino/daemon   muestrea el sistema (psutil, `last`, idle de Wayland), simula el
-               mundo y escribe state.json en $XDG_RUNTIME_DIR cada 2 s
-reino/render   GTK 4 + gtk4-layer-shell; sprites pixel art procedurales (cairo),
-               pintor isométrico, batallas e incendios, crónica, Menú
-reino/wl.py    cliente Wayland mínimo en Python puro (cobertura de ventanas, idle)
-reino/locales  todos los textos, castellano e inglés
+kingdom/daemon               muestrea el sistema (psutil, `last`, idle de Wayland/Windows), simula el
+                             mundo y escribe state.json en $XDG_RUNTIME_DIR (%TEMP% en Windows) cada 2 s
+kingdom/render               sprites pixel art procedurales (cairo), pintor isométrico, batallas e
+                             incendios, crónica, Menú; control.py es la lógica de la ventana sin toolkit
+  app.py                     Linux: GTK 4 + gtk4-layer-shell
+  sdl_app.py, win_desktop.py Windows: pygame-ce (SDL2), fondo detrás de los íconos del escritorio
+kingdom/wl.py                cliente Wayland mínimo en Python puro (cobertura de ventanas, idle)
+kingdom/locales              todos los textos del juego, castellano e inglés
+kingdom/legacy.py            lee mundos y configs guardados antes de la 0.4 (nombres internos en castellano)
 ```
 
 El mundo vive en el daemon: el reino sigue evolucionando aunque el fondo esté

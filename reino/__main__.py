@@ -1,3 +1,3 @@
-from .cli import main
+import runpy
 
-raise SystemExit(main())
+runpy.run_module("kingdom", run_name="__main__", alter_sys=True)
