@@ -94,17 +94,14 @@ def exec_python(*args: str):
 
 
 def lower_priority(nice: int):
+    """Linux: nice (el daemon nunca le compite a tus procesos). En Windows NO se baja: con la CPU
+    al 100% el planificador casi no le da turno a un proceso BELOW_NORMAL, y el mundo se
+    congelaba justo cuando tenía que reaccionar (tormentas, erupciones). Muestrear cuesta poco."""
     if hasattr(os, "nice"):
         try:
             os.nice(nice)
         except OSError:
             pass
-        return
-    try:
-        import psutil
-        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if nice > 0 else psutil.NORMAL_PRIORITY_CLASS)
-    except Exception:
-        pass
 
 
 def idle_seconds() -> float | None:

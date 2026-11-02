@@ -44,17 +44,20 @@ class FakeProc:
 
 class WindowsProbe(unittest.TestCase):
     def test_exe_names_match_the_config(self):
-        fake = [FakeProc(4, 0, "System", 1), FakeProc(100, 4, "chrome.exe", 300), FakeProc(101, 100, "chrome.exe", 200),
+        fake = [FakeProc(0, 0, "System Idle Process", 0), FakeProc(4, 0, "System", 1), FakeProc(100, 4, "chrome.exe", 300), FakeProc(101, 100, "chrome.exe", 200),
                 FakeProc(200, 4, "msedge.exe", 250), FakeProc(300, 4, "Code.exe", 400), FakeProc(400, 4, "svchost.exe", 900)]
         probe = probes.SystemProbe(config.load())
         with mock.patch.object(probes, "WINDOWS", True), mock.patch.object(probes, "scan_proc", return_value=None), \
                 mock.patch.object(probes.psutil, "process_iter", return_value=fake), \
                 mock.patch.object(probes.os, "getloadavg", side_effect=AttributeError, create=True):
+            probe.sample()
+            fake[0].info["cpu_times"] = Cpu(5000.0, 0.0)      # el "idle" suma el tiempo ocioso de todo
             snap = probe.sample()
         self.assertEqual(snap["browsers"]["chrome"]["procs"], 2)
         self.assertIn("edge", snap["browsers"])
         self.assertEqual(snap["editors"], {"Code": 1})
         self.assertNotIn("svchost", snap["apps"])                 # proceso del sistema, no una aldea
+        self.assertNotIn("System Idle Process", [t["name"] for t in snap["top"]])   # no es el culpable
         self.assertIsInstance(snap["load1"], float)
         self.assertTrue(snap["boots"])                            # sin `last`: el arranque actual
 

@@ -64,6 +64,12 @@ def scan_proc(long_names: dict) -> dict[int, dict] | None:
     return out
 
 
+# Windows: pseudo-procesos del kernel. "System Idle Process" (pid 0) acumula el tiempo OCIOSO
+# de todos los núcleos: sin filtrarlo, sería el "culpable" de cada tormenta.
+_WIN_PSEUDO = {0, 4}                                       # Idle, System
+_WIN_PSEUDO_NAMES = {"System Idle Process", "System", "Registry", "Memory Compression", "Secure System"}
+
+
 def _loopback(nic: str) -> bool:
     return nic == "lo" or nic.startswith("Loopback")      # Windows: "Loopback Pseudo-Interface 1"
 
@@ -250,6 +256,8 @@ class SystemProbe:
             for p in psutil.process_iter(_ATTRS, ad_value=None):
                 i = p.info
                 name = i["name"] or ""
+                if WINDOWS and (i["pid"] in _WIN_PSEUDO or name in _WIN_PSEUDO_NAMES):
+                    continue
                 if WINDOWS and name[-4:].lower() == ".exe":
                     name = name[:-4]
                 procs[i["pid"]] = {"pid": i["pid"], "ppid": i["ppid"], "name": name,
