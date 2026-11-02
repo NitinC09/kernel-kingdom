@@ -18,13 +18,36 @@ WALLPAPER = LINUX or WINDOWS   # Linux: layer-shell de Wayland. Windows: la capa
 
 
 def bootstrap():
-    """Windows: que ✔ ✘ y las tildes no rompan una consola cp1252."""
+    """Windows: coordenadas en píxeles reales en todos los monitores, y que ✔ ✘ y las tildes
+    no rompan una consola cp1252."""
     if not WINDOWS:
         return
+    _dpi_aware()
     for stream in (sys.stdout, sys.stderr):          # ✔ ✘ y tildes en la consola cp1252
         try:
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError):
+            pass
+
+
+def _dpi_aware():
+    """Per-monitor v2, como Explorer. Sin esto Windows le da a Python coordenadas escaladas
+    (un monitor al 125% mide 1536x864 en vez de 1920x1080) y el fondo cae fuera de lugar en
+    configuraciones con escalas distintas."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    try:
+        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):    # PER_MONITOR_AWARE_V2
+            return
+    except AttributeError:                                               # Windows 10 anterior a 1703
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)                   # PROCESS_PER_MONITOR_DPI_AWARE
+    except (AttributeError, OSError):
+        try:
+            user32.SetProcessDPIAware()
+        except AttributeError:
             pass
 
 

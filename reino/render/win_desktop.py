@@ -226,10 +226,19 @@ class DesktopHost:
         SetWindowLong(hwnd, GWL_STYLE, (style & ~(WS_POPUP | WS_FRAME)) | WS_CHILD | WS_VISIBLE)
         ex = GetWindowLong(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
         SetWindowLong(hwnd, GWL_EXSTYLE, (ex & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
-        SetParent(hwnd, layer)
+        ctypes.set_last_error(0)
+        if not SetParent(hwnd, layer) and ctypes.get_last_error():
+            raise OSError(f"SetParent falló (error {ctypes.get_last_error()})")
+        if GetAncestor(hwnd, GA_PARENT) != layer:
+            raise OSError("la ventana no quedó dentro de la capa del escritorio")
         self.hwnd, self.layer = hwnd, layer
         self.on_progman = _class(layer) == "Progman"   # sin WorkerW: debajo de los íconos a mano
         self._place()
+
+    def describe(self) -> str:
+        """Para el log: dónde quedó la ventana respecto de dónde debía."""
+        return (f"monitor {self.index} {self.rect}, capa {_class(self.layer)} "
+                f"{_rect(self.layer)}, ventana {_rect(self.hwnd)}")
 
     def _place(self):
         pt = wintypes.POINT(self.rect[0], self.rect[1])          # coordenadas de pantalla -> de la WorkerW

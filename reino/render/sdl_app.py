@@ -304,7 +304,8 @@ class SdlView(Controller):
             self.quit_app()
             return False
         self.win.show()
-        log(f"fondo de pantalla en el monitor {self.desktop.index} {self.desktop.size[0]}x{self.desktop.size[1]}")
+        self.desktop._place()                      # SDL reubica al mostrar: volver a ponerla en su monitor
+        log(f"fondo de pantalla: {self.desktop.describe()}")
         self.every(2000, self._watch_desktop)
         self._render()
         return False

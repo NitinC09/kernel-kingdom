@@ -47,6 +47,28 @@ del día, más el relato en Markdown, en `~/Imágenes/Kernel Kingdom` (sin IPs n
 nombres de usuario), y copia un texto corto al portapapeles. ¡Subí tus crónicas a
 [Discussions › Show and tell](https://github.com/rsmedrano-cloud/kernel-kingdom/discussions/categories/show-and-tell)!
 
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/rsmedrano-cloud/kernel-kingdom/main/install.ps1 | iex
+```
+
+No hay nada extra que preparar: el instalador usa el Python más nuevo de python.org (y ofrece
+instalarlo con `winget` cuando sale uno nuevo) y pip trae el resto en paquetes ya compilados.
+Volvé a correr el instalador cuando quieras para actualizar o pasar a un Python más nuevo; el
+mundo se conserva. En
+Windows no hay GTK: la ventana y el fondo se dibujan con [pygame-ce](https://pyga.me) (SDL2,
+acelerado por la GPU); el juego es el mismo. Agrega el comando `kernel-kingdom` y **Kernel
+Kingdom** en el menú Inicio, y arranca el mundo y el **fondo de pantalla** con Windows (carpeta
+Inicio). El fondo va detrás de los íconos del escritorio en cada monitor, como en Linux: los
+clics van al escritorio, se pausa mientras una app maximizada o en pantalla completa lo tapa,
+y vuelve solo si Explorer se reinicia. `kernel-kingdom wallpaper off` lo apaga (y lo saca de la
+carpeta Inicio). La presencia sale del temporizador de inactividad de Windows (sin contar
+teclas) y todavía no hay notificaciones de escritorio. El mundo vive en
+`%LOCALAPPDATA%\kernel-kingdom` y la config en `%APPDATA%\kernel-kingdom\config.toml`. Desde
+un clon: `py -m pip install psutil pycairo pygame-ce` y después `run.cmd` (fondo) o
+`run.cmd window`.
+
 ## Qué alimenta al mundo
 
 | Tu sistema | En el reino |

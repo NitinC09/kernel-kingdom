@@ -3,4 +3,4 @@ __version__ = "0.3.2"
 
 from . import compat as _compat
 
-_compat.bootstrap()        # Windows: DLL de GTK y consola; en Linux no hace nada
+_compat.bootstrap()        # Windows: DPI por monitor y consola; en Linux no hace nada
