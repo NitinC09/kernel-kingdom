@@ -8,8 +8,10 @@ así queda debajo de los íconos (los clics van al escritorio) y encima de la im
     SHELLDLL_DefView (los íconos).
   * Windows 11 24H2+: Progman contiene a SHELLDLL_DefView y a una WorkerW hija: esa.
 
-Pausa (oclusión): una ventana maximizada, en pantalla completa o que tapa ≥ coverage del
-monitor -> sin frames. Se consulta una vez por segundo (EnumWindows cuesta ~1 ms).
+Pausa (oclusión), como Lively: una ventana MAXIMIZADA en ese monitor, o la ventana ACTIVA
+tapando ≥ coverage de él (pantalla completa: juegos, videos) -> sin frames. Los overlays de
+pantalla completa (NVIDIA, Steam, barra de juegos) nunca están maximizados ni activos, así
+que no lo congelan. Se consulta una vez por segundo (EnumWindows cuesta ~1 ms).
 
 Si Explorer se reinicia, la WorkerW muere y con ella nuestra ventana: el renderer lo nota
 (IsWindow) y se relanza solo. Todo es ctypes: nada que instalar.
@@ -65,6 +67,7 @@ if sys.platform == "win32":                      # en otros sistemas solo sirve 
     GetWindowRect = _sig("GetWindowRect", B, H, ctypes.POINTER(wintypes.RECT))
     GetClassNameW = _sig("GetClassNameW", I, H, wintypes.LPWSTR, I)
     GetWindowTextW = _sig("GetWindowTextW", I, H, wintypes.LPWSTR, I)
+    GetForegroundWindow = _sig("GetForegroundWindow", H)
     GetLayeredWindowAttributes = _sig("GetLayeredWindowAttributes", B, H, ctypes.POINTER(wintypes.DWORD),
                                       ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(wintypes.DWORD))
     GetWindowThreadProcessId = _sig("GetWindowThreadProcessId", wintypes.DWORD, H, ctypes.POINTER(wintypes.DWORD))
@@ -185,32 +188,40 @@ class Occlusion:
         self.covered = self._compute()
         return self.covered != before
 
+    def _counts(self, hwnd) -> bool:
+        """¿Es una ventana de aplicación de verdad (no un overlay, una herramienta o el escritorio)?"""
+        if not hwnd or not IsWindowVisible(hwnd) or IsIconic(hwnd) or _pid(hwnd) == self._me:
+            return False
+        ex = GetWindowLong(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+        if ex & (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE):
+            return False
+        cls = _class(hwnd)
+        if cls in SHELL or cls in OVERLAY_CLASSES or not _title(hwnd):
+            return False
+        if ex & WS_EX_LAYERED and _see_through(hwnd):
+            return False
+        cloaked = wintypes.DWORD()                     # apps UWP ocultas y ventanas de otro escritorio virtual
+        return not (dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), 4) == 0
+                    and cloaked.value)
+
     def _compute(self) -> bool:
         hit = []
         cx, cy = (self.rect[0] + self.rect[2]) // 2, (self.rect[1] + self.rect[3]) // 2
+        fg = GetForegroundWindow()                     # pantalla completa: solo la ventana activa
+        if self._counts(fg) and _cov(_rect(fg), self.rect) >= self.coverage:
+            self.culprit = f"{_class(fg)} '{_title(fg)}' (activa)"
+            return True
 
         def cb(hwnd, _):
-            if not IsWindowVisible(hwnd) or IsIconic(hwnd) or _pid(hwnd) == self._me:
-                return True
-            ex = GetWindowLong(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
-            # herramientas, overlays que dejan pasar los clics y ventanas que no se activan: no tapan
-            if ex & (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE):
-                return True
-            cls = _class(hwnd)
-            if cls in SHELL or cls in OVERLAY_CLASSES or not _title(hwnd):
-                return True
-            if ex & WS_EX_LAYERED and _see_through(hwnd):
-                return True
-            cloaked = wintypes.DWORD()                 # apps UWP ocultas y ventanas de otro escritorio virtual
-            if dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), 4) == 0 and cloaked.value:
+            if not IsZoomed(hwnd) or not self._counts(hwnd):
                 return True
             r = _rect(hwnd)
-            if (IsZoomed(hwnd) and r[0] <= cx < r[2] and r[1] <= cy < r[3]) or _cov(r, self.rect) >= self.coverage:
+            if r[0] <= cx < r[2] and r[1] <= cy < r[3]:   # maximizada en ESTE monitor
                 hit.append(hwnd)
                 return False
             return True
         EnumWindows(WNDENUMPROC(cb), 0)
-        self.culprit = f"{_class(hit[0])} '{_title(hit[0])}'" if hit else None
+        self.culprit = f"{_class(hit[0])} '{_title(hit[0])}' (maximizada)" if hit else None
         return bool(hit)
 
 

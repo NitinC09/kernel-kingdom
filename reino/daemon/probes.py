@@ -117,6 +117,7 @@ class SystemProbe:
         self._container_names: dict[tuple[int, float], str | None] = {}
         self._long_names: dict[tuple[int, float], str] = {}
         self._temp_at, self._temp = -1e9, None
+        self._services: dict[int, bool] = {}        # Windows: pid -> corre como servicio
         psutil.cpu_percent(None)  # inicializa el contador interno
 
     # -- clasificación ------------------------------------------------------
@@ -163,6 +164,18 @@ class SystemProbe:
             for p in path:
                 memo[p] = result
         return memo
+
+    def _service(self, pid: int) -> bool:
+        """Windows: ¿corre como servicio (SYSTEM, LOCAL/NETWORK SERVICE)? Se mira una vez por proceso."""
+        if pid not in self._services:
+            try:
+                user = (psutil.Process(pid).username() or "").upper()
+            except psutil.AccessDenied:                # de otro usuario o protegido: del sistema
+                user = "SYSTEM"
+            except psutil.Error:
+                user = ""
+            self._services[pid] = user.endswith(("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE"))
+        return self._services[pid]
 
     def _is_app(self, name: str) -> bool:
         return bool(name) and name not in self.app_ignore and not name.startswith(self.app_ignore_prefix)
@@ -317,9 +330,15 @@ class SystemProbe:
             elif name in self.compilers:
                 group(compilers, name, info)
             elif owner is None and self._is_app(name):
-                group(apps, name, info)
+                if WINDOWS:
+                    group(apps, name, info, _pid=info["pid"])
+                else:
+                    group(apps, name, info)
 
         # 60% del mínimo: el mundo usa la diferencia como histéresis (no fundar/abandonar en bucle)
+        if WINDOWS:          # servicios de Windows (SYSTEM...) no son apps tuyas: no fundan aldeas
+            self._services = {p: v for p, v in self._services.items() if p in procs}
+            apps = {n: g for n, g in apps.items() if not self._service(g.pop("_pid"))}
         apps = dict(sorted(((n, g) for n, g in apps.items() if g["rss_mb"] >= 0.6 * self.app_min_rss),
                            key=lambda kv: -kv[1]["rss_mb"])[:self.app_max + 3])
         for table in (browsers, fortresses, compilers, apps):

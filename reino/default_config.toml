@@ -59,7 +59,10 @@ ignore = ["python3", "python", "Xwayland", "systemd", "pipewire", "wireplumber",
           "ctfmon", "conhost", "dllhost", "fontdrvhost", "spoolsv", "audiodg", "MsMpEng", "NisSrv",
           "SearchIndexer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost",
           "RuntimeBroker", "WmiPrvSE", "SecurityHealthService", "LsaIso", "WUDFHost", "Widgets",
-          "PhoneExperienceHost", "msedgewebview2", "MoUsoCoreWorker", "TiWorker", "TrustedInstaller"]
+          "PhoneExperienceHost", "msedgewebview2", "MoUsoCoreWorker", "TiWorker", "TrustedInstaller",
+          "NVIDIA Overlay", "NVIDIA Share", "NVIDIA Web Helper", "nvcontainer", "NvDisplay.Container",
+          "RtkAudUService64", "DtsApo4Service", "AsusOptimization", "ArmouryCrate.Service", "AsusCertService"]
+# (Windows: además, todo proceso que corre como servicio -SYSTEM, LOCAL/NETWORK SERVICE- se ignora solo)
 ignore_prefix = ["cosmic-applet", "cosmic-ext-applet", "cosmic-panel", "cosmic-comp", "cosmic-bg",
                  "cosmic-osd", "cosmic-session", "cosmic-settings-daemon", "cosmic-notifications",
                  "cosmic-launcher", "cosmic-app-library", "cosmic-workspaces", "cosmic-idle",

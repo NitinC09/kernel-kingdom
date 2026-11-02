@@ -45,11 +45,15 @@ class FakeProc:
 class WindowsProbe(unittest.TestCase):
     def test_exe_names_match_the_config(self):
         fake = [FakeProc(0, 0, "System Idle Process", 0), FakeProc(4, 0, "System", 1), FakeProc(100, 4, "chrome.exe", 300), FakeProc(101, 100, "chrome.exe", 200),
-                FakeProc(200, 4, "msedge.exe", 250), FakeProc(300, 4, "Code.exe", 400), FakeProc(400, 4, "svchost.exe", 900)]
+                FakeProc(200, 4, "msedge.exe", 250), FakeProc(300, 4, "Code.exe", 400), FakeProc(400, 4, "svchost.exe", 900),
+                FakeProc(500, 4, "VendorSvc.exe", 400), FakeProc(600, 4, "Cubase15.exe", 600)]
+        users = {500: "NT AUTHORITY\\SYSTEM", 600: "PC\\nitin"}
+        fake_proc = lambda pid: mock.Mock(username=mock.Mock(return_value=users.get(pid, "PC\\nitin")))
         probe = probes.SystemProbe(config.load())
         with mock.patch.object(probes, "WINDOWS", True), mock.patch.object(probes, "scan_proc", return_value=None), \
                 mock.patch.object(probes.psutil, "process_iter", return_value=fake), \
-                mock.patch.object(probes.os, "getloadavg", side_effect=AttributeError, create=True):
+                mock.patch.object(probes.os, "getloadavg", side_effect=AttributeError, create=True), \
+                mock.patch.object(probes.psutil, "Process", side_effect=fake_proc):
             probe.sample()
             fake[0].info["cpu_times"] = Cpu(5000.0, 0.0)      # el "idle" suma el tiempo ocioso de todo
             snap = probe.sample()
@@ -58,6 +62,9 @@ class WindowsProbe(unittest.TestCase):
         self.assertEqual(snap["editors"], {"Code": 1})
         self.assertNotIn("svchost", snap["apps"])                 # proceso del sistema, no una aldea
         self.assertNotIn("System Idle Process", [t["name"] for t in snap["top"]])   # no es el culpable
+        self.assertNotIn("VendorSvc", snap["apps"])               # servicio (SYSTEM): no funda aldea
+        self.assertIn("Cubase15", snap["apps"])                   # una app tuya sí
+        self.assertNotIn("_pid", snap["apps"]["Cubase15"])
         self.assertIsInstance(snap["load1"], float)
         self.assertTrue(snap["boots"])                            # sin `last`: el arranque actual
 
