@@ -64,6 +64,9 @@ if sys.platform == "win32":                      # en otros sistemas solo sirve 
     IsZoomed = _sig("IsZoomed", B, H)
     GetWindowRect = _sig("GetWindowRect", B, H, ctypes.POINTER(wintypes.RECT))
     GetClassNameW = _sig("GetClassNameW", I, H, wintypes.LPWSTR, I)
+    GetWindowTextW = _sig("GetWindowTextW", I, H, wintypes.LPWSTR, I)
+    GetLayeredWindowAttributes = _sig("GetLayeredWindowAttributes", B, H, ctypes.POINTER(wintypes.DWORD),
+                                      ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(wintypes.DWORD))
     GetWindowThreadProcessId = _sig("GetWindowThreadProcessId", wintypes.DWORD, H, ctypes.POINTER(wintypes.DWORD))
     ScreenToClient = _sig("ScreenToClient", B, H, ctypes.POINTER(wintypes.POINT))
     EnumDisplayMonitors = _sig("EnumDisplayMonitors", B, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
@@ -77,6 +80,10 @@ GWL_STYLE, GWL_EXSTYLE = -16, -20
 WS_CHILD, WS_VISIBLE, WS_POPUP = 0x40000000, 0x10000000, 0x80000000
 WS_FRAME = 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000   # caption, borde, menú, min/max
 WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE = 0x80, 0x40000, 0x08000000
+WS_EX_TRANSPARENT, WS_EX_LAYERED, LWA_ALPHA = 0x20, 0x80000, 0x2
+# Overlays de pantalla completa que no tapan nada (NVIDIA, barra de juegos, Steam...): sin esto
+# el fondo se pausaba solo al segundo de arrancar.
+OVERLAY_CLASSES = {"CEF-OSC-WIDGET", "GameOverlayUI", "XboxGameBarWidget", "MSCTFIME UI", "IME"}
 SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_SHOWWINDOW = 0x4, 0x10, 0x20, 0x40
 GA_PARENT, SMTO_NORMAL, DWMWA_CLOAKED, HWND_BOTTOM = 1, 0, 14, 1
 SHELL = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "SHELLDLL_DefView",
@@ -104,6 +111,20 @@ def _class(hwnd) -> str:
     buf = ctypes.create_unicode_buffer(256)
     GetClassNameW(hwnd, buf, 256)
     return buf.value
+
+
+def _title(hwnd) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    GetWindowTextW(hwnd, buf, 256)
+    return buf.value
+
+
+def _see_through(hwnd) -> bool:
+    """Ventana en capas con transparencia (alfa < 255): un overlay, no tapa el fondo."""
+    key, alpha, flags = wintypes.DWORD(), ctypes.c_ubyte(255), wintypes.DWORD()
+    if not GetLayeredWindowAttributes(hwnd, ctypes.byref(key), ctypes.byref(alpha), ctypes.byref(flags)):
+        return False
+    return bool(flags.value & LWA_ALPHA) and alpha.value < 255
 
 
 def _rect(hwnd) -> tuple[int, int, int, int]:
@@ -152,6 +173,7 @@ class Occlusion:
     def __init__(self, rect: tuple[int, int, int, int], coverage: float):
         self.rect, self.coverage = rect, coverage
         self.covered = False
+        self.culprit = None                          # qué ventana lo tapa (para el log)
         self.output_name = self.output_size = None
         self._me = os.getpid()
 
@@ -170,7 +192,14 @@ class Occlusion:
         def cb(hwnd, _):
             if not IsWindowVisible(hwnd) or IsIconic(hwnd) or _pid(hwnd) == self._me:
                 return True
-            if GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW or _class(hwnd) in SHELL:
+            ex = GetWindowLong(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+            # herramientas, overlays que dejan pasar los clics y ventanas que no se activan: no tapan
+            if ex & (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE):
+                return True
+            cls = _class(hwnd)
+            if cls in SHELL or cls in OVERLAY_CLASSES or not _title(hwnd):
+                return True
+            if ex & WS_EX_LAYERED and _see_through(hwnd):
                 return True
             cloaked = wintypes.DWORD()                 # apps UWP ocultas y ventanas de otro escritorio virtual
             if dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), 4) == 0 and cloaked.value:
@@ -181,6 +210,7 @@ class Occlusion:
                 return False
             return True
         EnumWindows(WNDENUMPROC(cb), 0)
+        self.culprit = f"{_class(hit[0])} '{_title(hit[0])}'" if hit else None
         return bool(hit)
 
 

@@ -338,6 +338,8 @@ class SdlView(Controller):
 
     def _poll_occlusion(self):
         if self.occl and self.desktop.hwnd and self.occl.poll():
+            if self.occl.covered:
+                log(f"tapado por {self.occl.culprit}")
             self._apply_occlusion()
         return CONTINUE
 
