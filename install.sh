@@ -2,7 +2,8 @@
 # kernel-kingdom installer.
 #   curl -fsSL https://raw.githubusercontent.com/rsmedrano-cloud/kernel-kingdom/main/install.sh | bash
 # Installs into ~/.local/share/kernel-kingdom/venv (uses the system's GTK/PyGObject),
-# links ~/.local/bin/kernel-kingdom and enables the systemd --user services.
+# links ~/.local/bin/kernel-kingdom and enables autostart: systemd --user services, OpenRC user
+# services (OpenRC 0.60+) plus the desktop's autostart, or only the desktop's autostart.
 # Options (env vars): KERNEL_KINGDOM_REPO=<github url>  KERNEL_KINGDOM_NO_SERVICE=1
 #                     KERNEL_KINGDOM_YES=1 (install missing system packages without asking)
 set -euo pipefail
@@ -62,6 +63,12 @@ elif command -v apt-get >/dev/null; then
 elif command -v pacman >/dev/null; then
   PKG_CMD="pacman -S --needed --noconfirm python python-gobject python-cairo gtk4 python-psutil python-setuptools python-wheel"
   PKG_SHELL="pacman -S --needed --noconfirm gtk4-layer-shell"
+elif command -v apk >/dev/null; then          # Alpine (OpenRC)
+  PKG_CMD="apk add python3 py3-gobject3 py3-cairo gtk4.0 py3-psutil py3-setuptools py3-wheel"
+  PKG_SHELL="apk add gtk4-layer-shell"
+elif command -v emerge >/dev/null; then       # Gentoo (OpenRC or systemd); gtk4-layer-shell needs USE=introspection
+  PKG_CMD="emerge --noreplace dev-lang/python dev-python/pygobject dev-python/pycairo gui-libs/gtk dev-python/psutil dev-python/setuptools"
+  PKG_SHELL="env USE=introspection emerge --noreplace gui-libs/gtk4-layer-shell"
 else
   PKG_CMD=""
 fi
@@ -108,7 +115,7 @@ case ":$PATH:" in *":$BIN:"*) ;; *) say "Add $BIN to your PATH";; esac
 
 "$PREFIX/venv/bin/kernel-kingdom" doctor || true
 if [ -z "${KERNEL_KINGDOM_NO_SERVICE:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ] && check_shell; then
-  say "Enabling autostart (systemd --user) and the app launcher"
+  say "Enabling autostart and the app launcher"
   "$PREFIX/venv/bin/kernel-kingdom" install || say "Could not enable the services; run 'kernel-kingdom' manually."
 elif [ -z "${KERNEL_KINGDOM_NO_SERVICE:-}" ] && [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
   say "Adding the app launcher (window mode)"

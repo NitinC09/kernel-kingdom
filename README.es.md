@@ -16,10 +16,13 @@ curl -fsSL https://raw.githubusercontent.com/rsmedrano-cloud/kernel-kingdom/main
 ```
 
 Instala en `~/.local/share/kernel-kingdom`, deja el comando `~/.local/bin/kernel-kingdom`,
-revisa tu sistema (`kernel-kingdom doctor`) y lo deja arrancando con la sesión
-(`systemd --user`). Necesita GTK 4, gtk4-layer-shell y PyGObject de tu distro: si
-falta algo, el instalador te muestra el comando exacto y se ofrece a correrlo
-(en Fedora Atomic los agrega con `rpm-ostree`; reiniciás y lo volvés a correr).
+revisa tu sistema (`kernel-kingdom doctor`) y lo deja arrancando con la sesión: servicios de
+`systemd --user`; con OpenRC (Alpine, Gentoo, Artix, Devuan...) el mundo pasa a ser un servicio
+de usuario de OpenRC (0.60+) y el fondo arranca desde el autostart del escritorio
+(`~/.config/autostart`), que también arranca todo con OpenRC viejo, runit o s6. Necesita GTK 4,
+gtk4-layer-shell y PyGObject de tu distro: si falta algo, el instalador te muestra el comando
+exacto y se ofrece a correrlo (apt, dnf, pacman, apk, emerge; en Fedora Atomic los agrega con
+`rpm-ostree`; reiniciás y lo volvés a correr).
 
 ```bash
 kernel-kingdom            # fondo de pantalla en todos los monitores, en segundo plano (la terminal queda libre)

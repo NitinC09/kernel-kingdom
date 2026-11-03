@@ -57,5 +57,61 @@ class ServicesTest(unittest.TestCase):
         self.assertEqual(started, [("render-all", "kingdom.render", "--monitor", "all")])
 
 
+
+class WithoutSystemdTest(unittest.TestCase):
+    """OpenRC user services and XDG autostart (Linux without systemd)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = self.tmp.name
+        self.env = mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": f"{d}/cfg", "XDG_RUNTIME_DIR": f"{d}/run",
+                                                  "XDG_STATE_HOME": f"{d}/state"})
+        self.env.start()
+        self.rc = []
+        self.patches = [mock.patch.object(cli, "WINDOWS", False), mock.patch.object(cli, "_systemd", return_value=False),
+                        mock.patch.object(cli, "ensure_daemon"), mock.patch.object(cli, "monitors", return_value=["DP-1"]),
+                        mock.patch.object(cli, "_start_shared_wallpaper"), mock.patch.object(cli, "install_launcher"),
+                        mock.patch.object(cli.services.subprocess, "run",
+                                          side_effect=lambda a, **k: self.rc.append(a) or SimpleNamespace(returncode=0))]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def args(self, **kw):
+        return SimpleNamespace(**({"monitors": "all", "no_wallpaper": False} | kw))
+
+    def test_openrc_user_service_and_autostart(self):
+        with mock.patch.object(cli.services, "user_services", return_value=True):
+            cli.cmd_install(self.args())
+        script = cli.services.script_path().read_text()
+        self.assertIn("supervisor=supervise-daemon", script)
+        self.assertIn("-m kingdom.daemon", script)
+        self.assertIn(["rc-update", "--user", "add", "kernel-kingdom", "default"], self.rc)
+        self.assertIn(["rc-service", "--user", "kernel-kingdom", "start"], self.rc)
+        self.assertRegex(cli.services.autostart_path().read_text(), r"Exec=.* run\n")      # the wallpaper
+
+    def test_no_user_services_autostart_starts_everything(self):
+        with mock.patch.object(cli.services, "user_services", return_value=False):
+            cli.cmd_install(self.args(no_wallpaper=False))
+            self.assertFalse(cli.services.installed())
+            self.assertRegex(cli.services.autostart_path().read_text(), r"Exec=.* run\n")
+            cli._linux_autostart(False)                  # wallpaper off: the world still starts
+        self.assertRegex(cli.services.autostart_path().read_text(), r"Exec=.* daemon\n")
+
+    def test_uninstall_removes_both(self):
+        with mock.patch.object(cli.services, "user_services", return_value=True):
+            cli.cmd_install(self.args())
+        with mock.patch.object(cli, "cmd_stop"):
+            cli.cmd_uninstall(SimpleNamespace())
+        self.assertFalse(cli.services.installed())
+        self.assertFalse(cli.services.autostart_path().exists())
+        self.assertIn(["rc-update", "--user", "del", "kernel-kingdom", "default"], self.rc)
+
+
 if __name__ == "__main__":
     unittest.main()

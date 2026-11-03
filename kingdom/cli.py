@@ -18,6 +18,7 @@ On Windows there is no systemd: the wallpaper goes behind the desktop icons (ren
 `install` puts the launcher in the Start menu and the world and the wallpaper in the Startup folder.
 """
 import argparse
+import re
 import os
 import shutil
 import signal
@@ -26,7 +27,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import compat, config, i18n, paths
+from . import compat, config, i18n, paths, services
 from .compat import WINDOWS
 from .i18n import ui
 
@@ -46,13 +47,13 @@ MemoryMax=250M
 WantedBy=default.target
 """
 RENDER_UNIT = """[Unit]
-Description=kernel-kingdom: wallpaper on monitor %i
+Description=kernel-kingdom: wallpaper on every monitor
 PartOf=graphical-session.target
 After=graphical-session.target kernel-kingdom-daemon.service
 Wants=kernel-kingdom-daemon.service
 
 [Service]
-ExecStart={python} -m kingdom.render --monitor %i
+ExecStart={python} -m kingdom.render --monitor {monitors}
 Restart=on-failure
 RestartSec=3
 
@@ -137,7 +138,9 @@ def _win_refresh_wallpaper():
 
 
 def _systemd() -> bool:
-    return not WINDOWS and shutil.which("systemctl") is not None
+    """systemd is the running init (sd_booted: /run/systemd/system) and systemctl exists. Checking
+    only for systemctl isn't enough: some OpenRC systems ship it without systemd running."""
+    return not WINDOWS and Path("/run/systemd/system").is_dir() and shutil.which("systemctl") is not None
 
 
 def _unit_active(unit: str) -> bool:
@@ -150,13 +153,15 @@ def _unit_installed(unit: str) -> bool:
 
 
 def ensure_daemon():
-    """The world runs apart from any window or terminal: a systemd service if
+    """The world runs apart from any window or terminal: a systemd or OpenRC user service if
     installed; otherwise a loose background process."""
     st = paths.state_file()
     if st.exists() and time.time() - st.stat().st_mtime < 10:
         return
-    if _unit_installed("kernel-kingdom-daemon.service"):
+    if _systemd() and _unit_installed("kernel-kingdom-daemon.service"):
         _systemctl("start", "kernel-kingdom-daemon.service", check=False)
+    elif not WINDOWS and services.installed() and services.start():
+        time.sleep(1.5)
     elif not _running("daemon"):
         _detach("daemon", "kingdom.daemon")
         time.sleep(1.5)                       # so the first state exists
@@ -172,28 +177,24 @@ def cmd_run(args):
         return cmd_window(args)
     ensure_daemon()
     targets = args.monitors.split(",") if args.monitors and args.monitors != "all" else (monitors() or [None])
-    if WINDOWS:
-        _start_windows_wallpaper()
-        print(ui("cli.started", monitors=", ".join(t or "?" for t in targets)))
-        return
-    for m in targets:
-        unit = f"kernel-kingdom-render@{m}.service"
-        if m and _unit_installed("kernel-kingdom-render@.service"):
-            _systemctl("start", unit, check=False)
-        elif not _running(f"render-{m}"):
-            _detach(f"render-{m}", "kingdom.render", *(["--monitor", m] if m else []))
+    if not WINDOWS and _systemd() and (_unit_installed(RENDER_SERVICE) or _unit_installed(OLD_RENDER_TEMPLATE)):
+        if _write_units():                                # older per-monitor services: one now
+            _systemctl("daemon-reload", check=False)
+        _systemctl("start", RENDER_SERVICE, check=False)
+    else:
+        _start_shared_wallpaper(args.monitors or "all")
     print(ui("cli.started", monitors=", ".join(t or "?" for t in targets)))
 
 
-def _start_windows_wallpaper():
-    """Windows: ONE process paints every monitor (each extra process would load Python, SDL,
-    cairo and the sprites again: ~100 MB per monitor). Per-monitor processes from older
+def _start_shared_wallpaper(spec: str = "all"):
+    """ONE process paints every monitor (each extra process would load Python, the toolkit,
+    cairo and the sprites again: ~60-160 MB per monitor). Per-monitor processes from older
     versions are stopped first."""
     for f in (paths.state_file().parent / "pids").glob("render-*.pid"):
         if f.stem != "render-all":
             _stop_pid(f.stem)
     if not _running("render-all"):
-        _detach("render-all", "kingdom.render", "--monitor", "all")
+        _detach("render-all", "kingdom.render", "--monitor", spec)
 
 
 def cmd_window(args):
@@ -243,11 +244,19 @@ def apply_update() -> tuple[bool, str, list[str]]:
         _write_units()                            # in case something changed in the services
         _systemctl("daemon-reload", check=False)
         install_launcher()
-    restarted = update.restart_services()
-    if not restarted and _running("daemon"):          # no systemd (Windows): the loose world
+    restarted = update.restart_services() if _systemd() else []
+    if not WINDOWS and services.installed():          # OpenRC: same service, new code
+        services.install(sys.executable, str(DEV_ROOT) if IS_CHECKOUT else None, _logs() / "daemon.log")
+        services.restart()
+        restarted.append(services.SERVICE)
+    elif not restarted and _running("daemon"):        # no service manager: the loose world
         _stop_pid("daemon")
         _detach("daemon", "kingdom.daemon")
-        restarted = ["daemon"]
+        restarted.append("daemon")
+    if not _systemd() and _running("render-all"):     # the loose wallpaper too
+        _stop_pid("render-all")
+        _start_shared_wallpaper()
+        restarted.append("wallpaper")
     return True, "", restarted
 
 
@@ -276,6 +285,8 @@ def cmd_stop(args):
         _stop_pid(name)
     if WINDOWS and renders:
         _win_refresh_wallpaper()
+    if not WINDOWS:
+        services.stop()
     if _systemd():
         out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend", "kernel-kingdom*"],
                              capture_output=True, text=True).stdout
@@ -286,11 +297,9 @@ def cmd_stop(args):
 
 def _foreground(args):
     """Development mode: everything in this terminal, with logs; Ctrl+C stops it."""
-    targets = args.monitors.split(",") if args.monitors and args.monitors != "all" else (monitors() or [None])
     procs = [subprocess.Popen([sys.executable, "-m", "kingdom.daemon"])]
     time.sleep(1.5)
-    for m in targets:
-        procs.append(subprocess.Popen([sys.executable, "-m", "kingdom.render", *(["--monitor", m] if m else [])]))
+    procs.append(subprocess.Popen([sys.executable, "-m", "kingdom.render", "--monitor", args.monitors or "all"]))
 
     def stop(*_):
         for p in procs:
@@ -348,28 +357,97 @@ def cmd_install(args):
         print(ui("cli.autostart"))
         print(ui("cli.win_logs", path=_logs()))
         return
-    if not shutil.which("systemctl"):
-        print(ui("cli.no_systemctl"))
-        return
+    if not _systemd():
+        return _install_without_systemd(args)
     _write_units()
     cmd_stop(args)                                        # whatever was running loose goes to systemd
     _systemctl("daemon-reload")
     _systemctl("enable", "--now", "kernel-kingdom-daemon.service")
     targets = [] if args.no_wallpaper else (args.monitors.split(",") if args.monitors != "all" else monitors())
-    for m in targets:
-        _systemctl("enable", "--now", f"kernel-kingdom-render@{m}.service")
+    if targets:
+        _write_units(args.monitors)
+        _systemctl("daemon-reload")
+        _systemctl("enable", "--now", RENDER_SERVICE)
     print(ui("cli.installed", monitors=", ".join(targets)) if targets else ui("cli.installed_world"))
     print(ui("cli.launcher"))
     print(ui("cli.logs"))
 
 
-def _write_units():
+RENDER_SERVICE, OLD_RENDER_TEMPLATE = "kernel-kingdom-render.service", "kernel-kingdom-render@.service"
+
+
+def _old_render_units() -> set[str]:
+    """Per-monitor services (kernel-kingdom-render@DP-1.service...) from before 0.4."""
+    units = set()
+    for cmd in ("list-units", "list-unit-files"):
+        out = subprocess.run(["systemctl", "--user", cmd, "--plain", "--no-legend", "--all", "kernel-kingdom-render@*"],
+                             capture_output=True, text=True).stdout
+        units |= {line.split()[0] for line in out.splitlines() if line.split() and "@." not in line.split()[0]}
+    return units
+
+
+def _session_command(sub: str) -> str:
+    """Command line for the desktop's autostart (a clone runs its run.sh, like the launcher)."""
+    return f"{DEV_ROOT / 'run.sh'} {sub}" if IS_CHECKOUT else f"{sys.executable} -m kingdom {sub}"
+
+
+def _linux_autostart(wallpaper: bool):
+    """XDG autostart: the wallpaper with the session; or, when no OpenRC user service runs the
+    world, at least the world."""
+    if wallpaper:
+        services.write_autostart(_session_command("run"))
+    elif not services.installed():
+        services.write_autostart(_session_command("daemon"))
+    else:
+        services.remove_autostart()
+
+
+def _install_without_systemd(args):
+    """OpenRC 0.60+: the world as an OpenRC user service; the wallpaper (and the world, with
+    no user services) from the desktop's XDG autostart."""
+    if services.user_services():
+        _stop_pid("daemon")                               # a loose world goes to OpenRC
+        services.install(sys.executable, str(DEV_ROOT) if IS_CHECKOUT else None, _logs() / "daemon.log")
+        print(ui("cli.openrc"))
+    elif services.openrc_init():
+        print(ui("cli.openrc_old"))
+    ensure_daemon()
+    targets = [] if args.no_wallpaper else (args.monitors.split(",") if args.monitors != "all" else monitors())
+    _linux_autostart(bool(targets))
+    if targets:
+        _start_shared_wallpaper(args.monitors)
+    print(ui("cli.installed", monitors=", ".join(targets)) if targets else ui("cli.installed_world"))
+    print(ui("cli.session_autostart", path=services.autostart_path()))
+    print(ui("cli.launcher"))
+    print(ui("cli.win_logs", path=_logs()))
+
+
+def _write_units(monitors_spec: str = "all") -> bool:
+    """Writes the services. Older per-monitor wallpaper services are replaced by the single one
+    (enabled if they were). Returns True if it migrated something (systemd needs a reload)."""
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
     workdir = f"WorkingDirectory={DEV_ROOT}\nEnvironment=PYTHONPATH={DEV_ROOT}\n" if IS_CHECKOUT else ""
     (UNIT_DIR / "kernel-kingdom-daemon.service").write_text(
         DAEMON_UNIT.format(python=sys.executable).replace("[Service]\n", "[Service]\n" + workdir))
-    (UNIT_DIR / "kernel-kingdom-render@.service").write_text(
-        RENDER_UNIT.format(python=sys.executable).replace("[Service]\n", "[Service]\n" + workdir))
+    existing = UNIT_DIR / RENDER_SERVICE
+    if monitors_spec == "all" and existing.exists():                 # keep a monitor list set at install
+        m = re.search(r"--monitor (\S+)", existing.read_text())
+        monitors_spec = m.group(1) if m else "all"
+    existing.write_text(RENDER_UNIT.replace("{monitors}", monitors_spec).format(python=sys.executable)
+                        .replace("[Service]\n", "[Service]\n" + workdir))
+    old_template = UNIT_DIR / OLD_RENDER_TEMPLATE
+    if not old_template.exists():
+        return False
+    old = _old_render_units()
+    was_on = any(subprocess.run(["systemctl", "--user", "is-enabled", "--quiet", u]).returncode == 0
+                 or _unit_active(u) for u in old)
+    for unit in old:
+        _systemctl("disable", "--now", unit, check=False)
+    old_template.unlink(missing_ok=True)
+    _systemctl("daemon-reload", check=False)
+    if was_on:
+        _systemctl("enable", "--now", RENDER_SERVICE, check=False)
+    return True
 
 
 # -- wallpaper: on / off (from the terminal or from the app's menu) ------------------
@@ -379,7 +457,7 @@ def wallpaper_status() -> bool:
         return False
     if shutil.which("systemctl"):
         out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend", "--state=active",
-                              "kernel-kingdom-render@*"], capture_output=True, text=True).stdout
+                              "kernel-kingdom-render*"], capture_output=True, text=True).stdout
         if out.strip():
             return True
     return any(_running(p.stem) for p in (paths.state_file().parent / "pids").glob("render-*.pid"))
@@ -392,14 +470,11 @@ def wallpaper_on() -> list[str]:
     if _systemd():
         _write_units()
         _systemctl("daemon-reload", check=False)
-        for m in targets:
-            _systemctl("enable", "--now", f"kernel-kingdom-render@{m}.service", check=False)
-    elif WINDOWS:
-        _start_windows_wallpaper()
+        _systemctl("enable", "--now", RENDER_SERVICE, check=False)
     else:
-        for m in targets:
-            if not _running(f"render-{m}"):
-                _detach(f"render-{m}", "kingdom.render", "--monitor", m)
+        _start_shared_wallpaper()
+        if not WINDOWS:                                   # so it comes back by itself at sign-in
+            _linux_autostart(True)
     if WINDOWS:                                           # so it comes back by itself at sign-in
         compat.make_shortcut(compat.startup_folder() / WIN_WALLPAPER_LNK, compat.gui_python(), "-m kingdom run",
                              workdir=str(DEV_ROOT) if IS_CHECKOUT else "",
@@ -409,17 +484,14 @@ def wallpaper_on() -> list[str]:
 
 def wallpaper_off():
     if _systemd():
-        out = subprocess.run(["systemctl", "--user", "list-unit-files", "--plain", "--no-legend",
-                              "kernel-kingdom-render@*"], capture_output=True, text=True).stdout
-        units = {line.split()[0] for line in out.splitlines() if "@." not in line.split()[0]}
-        out = subprocess.run(["systemctl", "--user", "list-units", "--plain", "--no-legend", "kernel-kingdom-render@*"],
-                             capture_output=True, text=True).stdout
-        units |= {line.split()[0] for line in out.splitlines()}
+        units = _old_render_units() | {RENDER_SERVICE}
         for unit in units:
             _systemctl("disable", "--now", unit, check=False)
     pids = list((paths.state_file().parent / "pids").glob("render-*.pid"))
     for f in pids:
         _stop_pid(f.stem)
+    if not WINDOWS and not _systemd() and services.autostart_path().exists():
+        _linux_autostart(False)
     if WINDOWS:
         (compat.startup_folder() / WIN_WALLPAPER_LNK).unlink(missing_ok=True)
         if pids:
@@ -451,6 +523,8 @@ def cmd_uninstall(args):
         return
     if not _systemd():
         cmd_stop(args)
+        services.uninstall()
+        services.remove_autostart()
     units = [p.name for p in UNIT_DIR.glob("kernel-kingdom*")] if _systemd() else []
     for name in units:
         if name.endswith("@.service"):
@@ -547,6 +621,10 @@ def _deps_hint() -> str:
         return "rpm-ostree install python3-gobject gtk4 gtk4-layer-shell  (and reboot)"
     if "fedora" in osr.lower():
         return "sudo dnf install python3-gobject gtk4 gtk4-layer-shell"
+    if "alpine" in osr.lower():
+        return "doas apk add py3-gobject3 py3-cairo gtk4.0 gtk4-layer-shell"
+    if "gentoo" in osr.lower():
+        return "sudo env USE=introspection emerge dev-python/pygobject gui-libs/gtk gui-libs/gtk4-layer-shell"
     if "arch" in osr.lower():
         return "sudo pacman -S python-gobject gtk4 gtk4-layer-shell"
     if "debian" in osr.lower() or "ubuntu" in osr.lower():
@@ -585,8 +663,9 @@ def main():
     win.add_argument("-f", "--foreground", action="store_true")
     win.add_argument("--mini", action="store_true", help="small window with an automatic camera (key m)")
     sub.add_parser("stop", help="stops everything (window, wallpaper and daemon)")
-    sub.add_parser("daemon", help="only the world, in the background (used by the Windows autostart)")
-    inst = sub.add_parser("install", help="launcher in the menu + autostart (systemd --user; Windows: Startup folder)")
+    sub.add_parser("daemon", help="only the world, in the background (used by autostart)")
+    inst = sub.add_parser("install", help="launcher in the menu + autostart (systemd --user, OpenRC --user or "
+                                          "the desktop's autostart; Windows: Startup folder)")
     inst.add_argument("--monitors", default="all")
     inst.add_argument("--no-wallpaper", action="store_true", help="only the world and the launcher, no wallpaper")
     wp = sub.add_parser("wallpaper", help="turn the wallpaper on/off (on, off, status)")

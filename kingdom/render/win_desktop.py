@@ -241,15 +241,6 @@ class DesktopHost:
     def size(self) -> tuple[int, int]:
         return self.rect[2] - self.rect[0], self.rect[3] - self.rect[1]
 
-    @property
-    def logical_size(self) -> tuple[int, int]:
-        """Size in GTK pixels (system display scale), for the first frame."""
-        try:
-            scale = user32.GetDpiForSystem() / 96 or 1
-        except AttributeError:                       # Windows anterior a 10 1607
-            scale = 1
-        return int(self.size[0] / scale), int(self.size[1] / scale)
-
     def alive(self) -> bool:
         return bool(self.hwnd and IsWindow(self.hwnd))
 

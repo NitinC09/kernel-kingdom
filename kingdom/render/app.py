@@ -75,8 +75,10 @@ def _find_monitor(spec: str) -> Gdk.Monitor | None:
 
 
 class Wallpaper(Controller):
-    def __init__(self, app: Gtk.Application, args, cfg: dict):
+    def __init__(self, app: Gtk.Application, args, cfg: dict, monitor: Gdk.Monitor | None = None):
         super().__init__(args, cfg)
+        self.retired = False                   # its monitor went away: every timer of it stops
+        self.monitor = monitor
         rc = cfg["render"]
         self.win = Gtk.ApplicationWindow(application=app, title="kernel-kingdom")
         self.view = WorldView()
@@ -93,7 +95,9 @@ class Wallpaper(Controller):
                 LayerShell.set_anchor(self.win, edge, True)
             LayerShell.set_exclusive_zone(self.win, -1)
             LayerShell.set_keyboard_mode(self.win, LayerShell.KeyboardMode.NONE)
-            if args.monitor is not None:
+            if monitor is not None:
+                LayerShell.set_monitor(self.win, monitor)
+            elif args.monitor is not None:
                 monitor = _find_monitor(args.monitor)
                 if monitor:
                     LayerShell.set_monitor(self.win, monitor)
@@ -162,9 +166,22 @@ class Wallpaper(Controller):
         GLib.idle_add(fn, *args)
 
     def every(self, ms, fn):
+        def tick():
+            return False if self.retired else fn()
         if ms % 1000 == 0:
-            return GLib.timeout_add_seconds(ms // 1000, fn)
-        return GLib.timeout_add(ms, fn)
+            return GLib.timeout_add_seconds(ms // 1000, tick)
+        return GLib.timeout_add(ms, tick)
+
+    def retire(self):
+        """Its monitor was unplugged: stop everything of this view (the others keep going)."""
+        self.retired = True
+        if self.occl:
+            try:
+                self.occl.conn.sock.close()
+            except OSError:
+                pass
+            self.occl = None
+        self.win.destroy()
 
     def cancel(self, src):
         GLib.source_remove(src)
@@ -241,6 +258,8 @@ class Wallpaper(Controller):
             self._apply_occlusion()
 
     def _on_wayland(self, chan, cond):
+        if self.retired or not self.occl:
+            return GLib.SOURCE_REMOVE
         try:
             if self.occl.dispatch():
                 self._apply_occlusion()
@@ -252,20 +271,56 @@ class Wallpaper(Controller):
             return GLib.SOURCE_REMOVE
 
 
+def _wanted(spec: str | None, monitors: list) -> list:
+    """Which monitors to paint: all of them (None / "all") or a list of connectors or indices."""
+    if spec in (None, "all"):
+        return monitors
+    out = []
+    for part in spec.split(","):
+        part = part.strip()
+        m = monitors[int(part)] if part.isdigit() and int(part) < len(monitors) else \
+            next((m for m in monitors if m.get_connector() == part), None)
+        if m is not None and m not in out:
+            out.append(m)
+    return out
+
+
 def run(args, cfg: dict):
     # There's only one window: opening it again (launcher or terminal) brings the existing one forward.
-    # Wallpapers are one per monitor, so those can be several.
+    # Wallpapers: ONE process paints every monitor (a window per monitor) and shares the sprite
+    # cache and the parsed state between them; monitors plugged in or out are followed live.
     if args.windowed:
         app = Gtk.Application(application_id="dev.kernelkingdom.Window", flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
     else:
         app = Gtk.Application(application_id="dev.kernelkingdom.Wallpaper", flags=Gio.ApplicationFlags.NON_UNIQUE)
     holder = {}
+    views: dict = {}                                     # Gdk.Monitor -> Wallpaper
+
+    def sync(*_):
+        monitors = list(Gdk.Display.get_default().get_monitors())
+        wanted = _wanted(args.monitor, monitors)
+        for m, v in list(views.items()):
+            if m not in wanted:
+                log(f"monitor {m.get_connector()} gone")
+                v.retire()
+                del views[m]
+        for m in wanted:
+            if m not in views:
+                views[m] = Wallpaper(app, args, cfg, m)
 
     def activate(a):
         if "wp" in holder:
-            holder["wp"].win.present()
-        else:
+            if holder["wp"] is not True:
+                holder["wp"].win.present()
+            return
+        layered = not args.windowed and LayerShell is not None and LayerShell.is_supported()
+        if not layered:
             holder["wp"] = Wallpaper(a, args, cfg)
+            return
+        holder["wp"] = True
+        a.hold()                                         # keeps running with zero monitors too
+        sync()
+        Gdk.Display.get_default().get_monitors().connect("items-changed", sync)
     app.connect("activate", activate)
     for sig in (signal.SIGINT, signal.SIGTERM):
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, app.quit)

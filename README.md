@@ -16,10 +16,13 @@ curl -fsSL https://raw.githubusercontent.com/rsmedrano-cloud/kernel-kingdom/main
 ```
 
 It installs into `~/.local/share/kernel-kingdom`, links `~/.local/bin/kernel-kingdom`, checks
-your system (`kernel-kingdom doctor`) and enables autostart with the session
-(`systemd --user`). It needs GTK 4, gtk4-layer-shell and PyGObject from your
-distro: if any is missing, the installer shows the exact command and offers to run it
-(on Fedora Atomic it layers them with `rpm-ostree`; reboot and run it again).
+your system (`kernel-kingdom doctor`) and enables autostart with the session: `systemd --user`
+services; on OpenRC (Alpine, Gentoo, Artix, Devuan...) the world becomes an OpenRC user
+service (OpenRC 0.60+) and the wallpaper starts from the desktop's autostart
+(`~/.config/autostart`), which also starts everything on older OpenRC, runit or s6. It needs
+GTK 4, gtk4-layer-shell and PyGObject from your distro: if any is missing, the installer
+shows the exact command and offers to run it (apt, dnf, pacman, apk, emerge; on Fedora
+Atomic it layers them with `rpm-ostree`; reboot and run it again).
 
 ```bash
 kernel-kingdom            # wallpaper on every monitor, in the background (the terminal is free right away)
