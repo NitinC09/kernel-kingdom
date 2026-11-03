@@ -52,6 +52,8 @@ Handler = Callable[[int, Reader], None]
 
 class Connection:
     def __init__(self, on_global: Callable[[int, str, int], None] | None = None):
+        if not hasattr(socket, "SOCK_CLOEXEC") or "XDG_RUNTIME_DIR" not in os.environ:
+            raise OSError("no hay sesión Wayland")          # Windows, macOS, X11 sin runtime dir
         path = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
         if not path.startswith("/"):
             path = os.path.join(os.environ["XDG_RUNTIME_DIR"], path)

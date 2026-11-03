@@ -8,6 +8,7 @@ import json
 import time
 
 from . import paths
+from .compat import WINDOWS
 
 KEYS = {"war.declare", "war.start", "capital.sacked", "fall", "wonder.done", "pirates", "walls.breach",
         "exp.siege.breach", "dyn.reborn", "dragon.leave"}
@@ -25,7 +26,7 @@ class Notifier:
         self.last = 0.0
         self.where: dict[int, tuple[int, int]] = {}
         self.bus = None
-        if not self.enabled:
+        if not self.enabled or WINDOWS:        # D-Bus de escritorio: solo Linux
             return
         try:
             from gi.repository import Gio, GLib

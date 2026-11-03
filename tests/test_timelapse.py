@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from reino import config, timelapse
-from reino.daemon.world import World
+from kingdom import config, timelapse
+from kingdom.daemon.world import World
 
 from test_world import proc, snap
 
@@ -34,7 +34,7 @@ class TimelapseTest(unittest.TestCase):
             im = Image.open(out)
             self.assertEqual(im.n_frames, 3)
             im.seek(2)
-            im.convert("RGB")                               # decodifica sin errores
+            im.convert("RGB")                               # decodes without errors
 
 
 if __name__ == "__main__":

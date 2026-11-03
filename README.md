@@ -1,6 +1,6 @@
 # kernel-kingdom — your computer is a kingdom
 
-A pixel-art isometric **live wallpaper / idle game for Linux (Wayland)** where the
+A pixel-art isometric **live wallpaper / idle game for Linux (Wayland) and Windows** where the
 world is built from what your machine is actually doing. Browsers become
 empires, containers become citadels, compiling summons thunderstorms, and a
 procedural chronicle narrates it all.
@@ -46,6 +46,27 @@ fly there (`[notify]` in the config).
 day's headlines plus the story as Markdown in `~/Pictures/Kernel Kingdom` (IPs
 and user names are removed) and copies a short text to the clipboard. Post your
 chronicles in [Discussions › Show and tell](https://github.com/rsmedrano-cloud/kernel-kingdom/discussions/categories/show-and-tell)!
+
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/rsmedrano-cloud/kernel-kingdom/main/install.ps1 | iex
+```
+
+Nothing extra to set up: the installer uses the newest Python from python.org (and offers to
+install it with `winget` when a newer one is out), and pip brings the rest as ready-made wheels.
+Run the installer again any time to update or move to a newer Python; your world is kept.
+On Windows there is no GTK: the window and the wallpaper are drawn with
+[pygame-ce](https://pyga.me) (SDL2, GPU-accelerated), the same game otherwise. It adds a
+`kernel-kingdom` command and a **Kernel Kingdom** entry in the Start menu, and starts the world
+and the **wallpaper** with Windows (Startup folder). The wallpaper lives behind your desktop
+icons on every monitor, like on Linux: clicks go to the desktop, it pauses while a maximized or
+fullscreen app covers it, and it comes back by itself if Explorer restarts. `kernel-kingdom
+wallpaper off` turns it off (and out of the Startup folder). Presence comes from Windows' idle
+timer (no keystroke counting); there are no desktop notifications yet. Your world lives in
+`%LOCALAPPDATA%\kernel-kingdom`, the config in `%APPDATA%\kernel-kingdom\config.toml`.
+From a clone: `py -m pip install psutil pycairo pygame-ce`, then `run.cmd` (wallpaper) or
+`run.cmd window`.
 
 ## What feeds the world
 
@@ -170,15 +191,19 @@ in the `input` group; otherwise only presence/absence is detected.
 
 ## How it works
 
-The Python package is called `reino` (Spanish for *kingdom*; the project started in Spanish).
+The Python package is `kingdom` (it used to be `reino`, Spanish for *kingdom*; the
+project started in Spanish, and a tiny `reino` package still forwards old launchers).
 
 ```
-reino/daemon   samples the system (psutil, `last`, Wayland idle), runs the world,
-               writes state.json to $XDG_RUNTIME_DIR every 2 s
-reino/render   GTK 4 + gtk4-layer-shell; procedural pixel-art sprites (cairo),
-               isometric painter, battles and fires, chronicle, Menu
-reino/wl.py    tiny pure-Python Wayland client (window coverage, idle)
-reino/locales  all text, Spanish and English
+kingdom/daemon               samples the system (psutil, `last`, Wayland/Windows idle), runs the
+                             world, writes state.json to $XDG_RUNTIME_DIR (%TEMP% on Windows) every 2 s
+kingdom/render               procedural pixel-art sprites (cairo), isometric painter, battles and
+                             fires, chronicle, Menu; control.py is the toolkit-free window logic
+  app.py                     Linux host: GTK 4 + gtk4-layer-shell
+  sdl_app.py, win_desktop.py Windows host: pygame-ce (SDL2), wallpaper behind the desktop icons
+kingdom/wl.py                tiny pure-Python Wayland client (window coverage, idle)
+kingdom/locales              all game text, Spanish and English
+kingdom/legacy.py            reads worlds and configs saved before 0.4 (Spanish internal names)
 ```
 
 The world lives in the daemon, so the kingdom keeps evolving even while the

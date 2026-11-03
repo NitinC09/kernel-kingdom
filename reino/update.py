@@ -55,7 +55,7 @@ def install() -> tuple[bool, str]:
         cmds = [["git", "-C", str(ROOT), "pull", "--ff-only"]]
     else:
         pip = [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check"]
-        if _offline_build():                     # psutil y setuptools del sistema: nada de PyPI
+        if _offline_build() and sys.platform != "win32":   # psutil y setuptools del sistema: nada de PyPI
             cmds = [pip + ["--upgrade", "--force-reinstall", "--no-deps", "--no-build-isolation", TARBALL]]
         else:
             cmds = [pip + ["--upgrade", "--force-reinstall", "--no-deps", TARBALL], pip + [TARBALL]]

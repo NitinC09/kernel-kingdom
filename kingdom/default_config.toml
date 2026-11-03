@@ -1,0 +1,191 @@
+# Default configuration of kernel-kingdom.
+# Don't edit this file: copy the sections you want to change to
+# ~/.config/kernel-kingdom/config.toml (on Windows %APPDATA%\kernel-kingdom\config.toml;
+# `kernel-kingdom config` creates it) and they are merged on top.
+
+language = "auto"     # "auto" (from the system language), "es" or "en"
+
+[daemon]
+interval = 2.0        # seconds between system samples
+save_every = 30.0     # seconds between saves of the persistent world
+nice = 10             # low priority: the daemon never competes with your processes
+
+[world]
+size = 72             # grilla size x size
+aspect = 1.78         # proportion of the island on screen (16:9). 2.33 for ultrawide
+seed = 0              # 0 = a random island (it's saved); any other number = a fixed island
+
+# ---------------------------------------------------------------------------
+# Expanding factions: browsers (and Electron apps). Key = name of the
+# faction; value = root process names. All descendant processes
+# (renderers, GPU, utility...) add up to the faction.
+[browsers]
+chrome   = ["chrome", "chromium", "chromium-browse", "google-chrome", "chrome_crashpad"]
+firefox  = ["firefox", "firefox-bin", "floorp", "librewolf", "waterfox", "mercury"]
+zen      = ["zen", "zen-bin"]
+brave    = ["brave", "brave-browser"]
+edge     = ["msedge"]
+opera    = ["opera", "opera_gx"]
+vivaldi  = ["vivaldi"]
+electron = ["vesktop", "vesktop.bin", "Discord", "discord", "slack", "obsidian", "electron"]
+
+[browsers_rules]
+mb_per_tile = 40          # every 40 MB of RSS = 1 tile of target territory
+max_land_fraction = 0.22  # a faction never takes more than 22% of the land
+expand_per_tick = 4       # max tiles gained per tick
+shrink_per_tick = 3       # max tiles lost per tick (abandoned -> ruins)
+density_k = 0.35          # how much buildings rise per child process
+friction_ratio = 1.25     # a faction steals tiles from another if it has 25% more RAM
+ruin_ticks = 45           # how long the ruins of abandoned quarters last
+
+[colors]
+chrome   = [217, 74, 61]
+firefox  = [240, 138, 36]
+zen      = [142, 108, 216]
+brave    = [242, 95, 28]
+edge     = [38, 166, 154]
+opera    = [204, 30, 70]
+vivaldi  = [239, 57, 57]
+electron = [91, 141, 239]
+
+# Other heavy apps that aren't browsers -> hamlets with a landmark building
+[apps]
+min_rss_mb = 150          # an app has to use at least this to found a hamlet
+max = 5                   # maximum number of hamlets (those with the most RAM)
+mb_per_tile = 30
+max_tiles = 14
+ignore = ["python3", "python", "Xwayland", "systemd", "pipewire", "wireplumber", "mpvpaper",
+          "gnome-keyring-daemon", "dbus-broker", "flatpak-session-helper", "bwrap", "conmon",
+          "claude-code-guide",
+          # Windows: system processes that aren't "apps" (names without .exe)
+          "pythonw", "System", "Registry", "Memory Compression", "MemCompression", "svchost", "csrss",
+          "lsass", "services", "smss", "wininit", "winlogon", "dwm", "explorer", "sihost", "taskhostw",
+          "ctfmon", "conhost", "dllhost", "fontdrvhost", "spoolsv", "audiodg", "MsMpEng", "NisSrv",
+          "SearchIndexer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost",
+          "RuntimeBroker", "WmiPrvSE", "SecurityHealthService", "LsaIso", "WUDFHost", "Widgets",
+          "PhoneExperienceHost", "msedgewebview2", "MoUsoCoreWorker", "TiWorker", "TrustedInstaller",
+          "NVIDIA Overlay", "NVIDIA Share", "NVIDIA Web Helper", "nvcontainer", "NvDisplay.Container",
+          "RtkAudUService64", "DtsApo4Service", "AsusOptimization", "ArmouryCrate.Service", "AsusCertService"]
+# (Windows: also, any process running as a service -SYSTEM, LOCAL/NETWORK SERVICE- is ignored automatically)
+ignore_prefix = ["cosmic-applet", "cosmic-ext-applet", "cosmic-panel", "cosmic-comp", "cosmic-bg",
+                 "cosmic-osd", "cosmic-session", "cosmic-settings-daemon", "cosmic-notifications",
+                 "cosmic-launcher", "cosmic-app-library", "cosmic-workspaces", "cosmic-idle",
+                 "cosmic-files-applet", "cosmic-greeter", "xdg-", "at-spi", "gvfs", "evolution-",
+                 "gnome-", "kworker", "ibus"]
+
+# Landmark building of each hamlet: oracle, arena, theater, tavern, watchtower,
+# windmill, granary, market, smithy. Apps not listed here get a random one.
+[apps.landmarks]
+claude = "oracle"
+cosmic-term = "smithy"
+alacritty = "smithy"
+kitty = "smithy"
+steam = "arena"
+steamwebhelper = "arena"
+obs = "theater"
+spotify = "tavern"
+opensnitch-ui = "watchtower"
+
+# ---------------------------------------------------------------------------
+# Fortresses: stable services. Containers are detected automatically
+# (Podman's conmon / Docker's containerd-shim).
+[fortresses]
+databases = ["postgres", "mysqld", "mariadbd", "redis-server", "valkey-server", "mongod"]
+daemons   = ["sshd", "ollama", "syncthing", "sunshine", "tailscaled", "dockerd", "pipewire"]
+min_uptime = 60           # seconds running before building the castle
+walls_at = [600, 3600]    # uptime (s) for wall level 1 and level 2
+shield_radius = 4         # base radius (tiles) a castle protects from lightning
+shield_cost = 5.0         # defense spent per blocked lightning bolt
+
+# Development environments -> Academy Tower (floors = open editors)
+[dev]
+editors   = ["code", "codium", "nvim", "vim", "emacs", "zed", "zeditor", "hx", "helix", "idea", "pycharm",
+             "Code", "VSCodium", "Cursor", "devenv", "idea64", "pycharm64", "rider64", "notepad++"]
+compilers = ["cc1", "cc1plus", "rustc", "clang", "clang++", "gcc", "g++", "ld", "ld.lld", "mold",
+             "javac", "go", "tsc", "esbuild", "cargo", "ninja", "make", "webpack", "vite",
+             "cl", "link", "MSBuild", "csc", "mingw32-make"]
+
+# ---------------------------------------------------------------------------
+# CPU spikes -> weather
+[weather]
+storm_cpu = 55        # % CPU (moving average) for a thunderstorm
+eruption_cpu = 85     # % CPU sostenido...
+eruption_hold = 20    # ...for these seconds -> the volcano erupts
+fog_ram = 85          # % RAM -> fog (factions can't expand)
+lightning_rate = 1.5  # expected lightning bolts per tick at maximum intensity
+burn_ticks = 25       # how long a burned tile takes to be rebuilt
+heat_temp = 82        # CPU °C -> heat wave (forests can catch fire)
+plague_swap = 25      # % of swap -> plague (the biggest city can't grow taller)
+
+# Other system variables -> events
+[events]
+fleet_mbps = 4.0      # sustained download (MB/s) -> a merchant fleet arrives
+caravan_mbps = 1.5    # subida sostenida (MB/s) -> parten caravanas
+mine_mbps = 40.0      # disk (MB/s) -> the mines work flat out
+births_boom = 80      # new processes in one tick -> "population boom"
+typing_burst_kpm = 220
+afk_minutes = 10      # absence the kingdom notices
+flavor_every = 600    # average ticks between flavor events (600 ticks = 20 min)
+
+# Lore names. Whatever isn't here is generated from the process name.
+[lore.realms]
+chrome = "Cromaria"
+firefox = "Zorravia"
+zen = "Zenhar"
+brave = "Leonis"
+electron = "Electra"
+claude = "Claudel"
+cosmic-term = "Terminalia"
+
+[lore.places]
+sshd = "Llavegrís"
+tailscaled = "Velotejido"
+pipewire = "Cañosonoro"
+ollama = "Llamaroja"
+postgres = "Elefantia"
+redis-server = "Rojapresta"
+Fedora = "Sombrero Azul"
+
+# Sovereign powers: what each one costs (gold, stone, mana, defense).
+# Used from the wallpaper's power bar (or keys 1-9 in window mode).
+[powers]
+lightning = { mana = 5 }
+rain = { mana = 15 }
+blessing = { mana = 20 }
+hero = { mana = 40 }
+forest = { gold = 20 }
+lighthouse = { gold = 60, stone = 30 }
+festival = { gold = 40 }
+discord = { mana = 30 }
+exodus = { mana = 25 }
+wonder = { gold = 800, stone = 120 }   # each wonder costs 1.6 times the previous one
+dragon = { mana = 120, gold = 200 }
+walls = { defense = 300, stone = 60 }
+truce = { gold = 300 }
+
+# ---------------------------------------------------------------------------
+[render]
+max_fps = 30          # tope duro
+idle_fps = 6          # without active weather: villagers, boats, windmills. 0 = static
+away_fps = 2          # while you're away (no input for afk_minutes): nobody is watching. 0 = only on changes
+pixel_scale = "auto"  # integer (3 = each logical pixel takes 3x3) or "auto": fits the island to the screen
+coverage = 0.90       # fraction of the screen covered by windows to pause (tiling with gaps ≈ 0.95)
+interactive = false   # the wallpaper is for watching (clicks go through to the desktop).
+                      # true: also shows info cards on click. The window is always interactive.
+show_chronicle = true
+show_powers = true    # Sovereign power bar
+labels = false        # realm and region names on the map on the wallpaper (in the window: Menu > View)
+hemisphere = "auto"   # seasons: "north", "south" or "auto" (from the time zone)
+
+# On battery the frame rate is capped lower (checked every 30 s).
+[battery]
+max_fps = 15
+idle_fps = 3
+
+# ---------------------------------------------------------------------------
+[notify]
+enabled = true        # desktop notifications for wars, sacks, wonders...
+min_minutes = 10      # at most one every so many minutes (and none while the window is open)
+
+[update]
+check = true          # the window asks GitHub (every 6 h at most) whether there's a new version

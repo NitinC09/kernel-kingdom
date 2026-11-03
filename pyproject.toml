@@ -4,17 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kernel-kingdom"
-version = "0.3.2"
+version = "0.4.0"
 description = "Pixel-art isometric live wallpaper / idle game whose kingdoms grow from your system's processes, RAM, CPU and containers."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
-dependencies = ["psutil>=5.9"]
-# PyGObject, pycairo, GTK 4 y gtk4-layer-shell vienen del sistema (ver README / install.sh)
+dependencies = [
+    "psutil>=5.9",
+    # Windows: no GTK, the window and the wallpaper use pygame-ce (SDL2); all ready-made wheels
+    "pycairo>=1.20; sys_platform == 'win32'",
+    "pygame-ce>=2.5; sys_platform == 'win32'",
+]
+# Linux: PyGObject, pycairo, GTK 4 and gtk4-layer-shell come from the system (see README / install.sh)
 keywords = ["wallpaper", "wayland", "pixel-art", "idle-game", "system-monitor"]
 classifiers = [
     "Environment :: X11 Applications :: GTK",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Topic :: Desktop Environment",
     "Topic :: Games/Entertainment :: Simulation",
 ]
@@ -24,10 +30,10 @@ Homepage = "https://rsmedrano-cloud.github.io/kernel-kingdom/"
 Source = "https://github.com/rsmedrano-cloud/kernel-kingdom"
 
 [project.scripts]
-kernel-kingdom = "reino.cli:main"
+kernel-kingdom = "kingdom.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["reino*"]
+include = ["kingdom*", "reino*"]   # reino: old name, forwards to kingdom
 
 [tool.setuptools.package-data]
-reino = ["default_config.toml"]
+kingdom = ["default_config.toml"]

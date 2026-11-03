@@ -1,13 +1,27 @@
-"""Rutas XDG compartidas por daemon y renderer."""
+"""Rutas XDG compartidas por daemon y renderer (en Windows: %APPDATA%, %LOCALAPPDATA%, %TEMP%)."""
 import os
+import tempfile
 from pathlib import Path
+
+from .compat import WINDOWS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "default_config.toml"
 
 
+# Windows: la variable XDG manda si alguien la definió; si no, carpetas nativas
+# (config en %APPDATA%\kernel-kingdom, mundo y datos en %LOCALAPPDATA%\kernel-kingdom).
+_WIN = {"XDG_CONFIG_HOME": ("APPDATA", "Roaming"), "XDG_STATE_HOME": ("LOCALAPPDATA", "Local"),
+        "XDG_DATA_HOME": ("LOCALAPPDATA", "Local")}
+
+
 def _xdg(var: str, fallback: str) -> Path:
-    return Path(os.environ.get(var) or Path.home() / fallback)
+    if os.environ.get(var):
+        return Path(os.environ[var])
+    if WINDOWS and var in _WIN:
+        env, sub = _WIN[var]
+        return Path(os.environ.get(env) or Path.home() / "AppData" / sub)
+    return Path.home() / fallback
 
 
 def user_config() -> Path:
@@ -16,7 +30,8 @@ def user_config() -> Path:
 
 def state_file() -> Path:
     """Estado vivo: va a XDG_RUNTIME_DIR (tmpfs), así no gastamos disco cada 2 s."""
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/kernel-kingdom-{os.getuid()}"
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or (
+        tempfile.gettempdir() if WINDOWS else f"/tmp/kernel-kingdom-{os.getuid()}")
     return Path(runtime) / "kernel-kingdom" / "state.json"
 
 

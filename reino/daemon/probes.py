@@ -3,7 +3,8 @@
 Una pasada por el árbol de procesos por tick leyendo un solo archivo por
 proceso (/proc/<pid>/stat: nombre, padre, tiempos de CPU, arranque y RSS); con
 cientos de procesos, psutil abre varios por cada uno y cuesta 10 veces más.
-Fuera de Linux se usa psutil. La cmdline solo se lee para nombres truncados y
+Fuera de Linux se usa psutil (en Windows sin el ".exe", para que los nombres de la
+config valgan en los dos sistemas). La cmdline solo se lee para nombres truncados y
 para los procesos de contenedores, y se cachea.
 """
 import os
@@ -14,9 +15,13 @@ import time
 
 import psutil
 
+from ..compat import WINDOWS
+
 _ATTRS = ["pid", "ppid", "name", "memory_info", "cpu_times", "create_time"]
 MB = 1024 * 1024
 _TICK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+# Linux: versión del kernel. Windows: el número de build (cambia con cada actualización grande)
+KERNEL = platform.version() if WINDOWS else platform.release()
 _PAGE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
 
 
@@ -59,6 +64,26 @@ def scan_proc(long_names: dict) -> dict[int, dict] | None:
     return out
 
 
+# Windows: pseudo-procesos del kernel. "System Idle Process" (pid 0) acumula el tiempo OCIOSO
+# de todos los núcleos: sin filtrarlo, sería el "culpable" de cada tormenta.
+_WIN_PSEUDO = {0, 4}                                       # Idle, System
+_WIN_PSEUDO_NAMES = {"System Idle Process", "System", "Registry", "Memory Compression", "Secure System"}
+
+
+def _loopback(nic: str) -> bool:
+    return nic == "lo" or nic.startswith("Loopback")      # Windows: "Loopback Pseudo-Interface 1"
+
+
+def _load1() -> float:
+    try:
+        return os.getloadavg()[0]
+    except (AttributeError, OSError):                      # Windows: psutil la emula
+        try:
+            return psutil.getloadavg()[0]
+        except (AttributeError, OSError):
+            return 0.0
+
+
 def _arg_after(cmdline: list[str], flags: tuple[str, ...]) -> str | None:
     for i, arg in enumerate(cmdline[:-1]):
         if arg in flags:
@@ -92,6 +117,7 @@ class SystemProbe:
         self._container_names: dict[tuple[int, float], str | None] = {}
         self._long_names: dict[tuple[int, float], str] = {}
         self._temp_at, self._temp = -1e9, None
+        self._services: dict[int, bool] = {}        # Windows: pid -> corre como servicio
         psutil.cpu_percent(None)  # inicializa el contador interno
 
     # -- clasificación ------------------------------------------------------
@@ -139,6 +165,18 @@ class SystemProbe:
                 memo[p] = result
         return memo
 
+    def _service(self, pid: int) -> bool:
+        """Windows: ¿corre como servicio (SYSTEM, LOCAL/NETWORK SERVICE)? Se mira una vez por proceso."""
+        if pid not in self._services:
+            try:
+                user = (psutil.Process(pid).username() or "").upper()
+            except psutil.AccessDenied:                # de otro usuario o protegido: del sistema
+                user = "SYSTEM"
+            except psutil.Error:
+                user = ""
+            self._services[pid] = user.endswith(("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE"))
+        return self._services[pid]
+
     def _is_app(self, name: str) -> bool:
         return bool(name) and name not in self.app_ignore and not name.startswith(self.app_ignore_prefix)
 
@@ -147,8 +185,8 @@ class SystemProbe:
         net = psutil.net_io_counters(pernic=True)
         disk = psutil.disk_io_counters()
         return {
-            "net_rx": sum(v.bytes_recv for k, v in net.items() if k != "lo"),
-            "net_tx": sum(v.bytes_sent for k, v in net.items() if k != "lo"),
+            "net_rx": sum(v.bytes_recv for k, v in net.items() if not _loopback(k)),
+            "net_tx": sum(v.bytes_sent for k, v in net.items() if not _loopback(k)),
             "disk_r": disk.read_bytes if disk else 0,
             "disk_w": disk.write_bytes if disk else 0,
         }
@@ -176,6 +214,8 @@ class SystemProbe:
         if now - self._last_at < 60:
             return self._last
         self._last_at = now
+        if WINDOWS:                    # sin wtmp: las visitas llegan solo desde psutil.users()
+            return self._windows_logins()
         try:
             out = subprocess.run(["last", "-n", "400", "-w", "--time-format", "iso"],
                                  capture_output=True, text=True, timeout=3).stdout
@@ -198,6 +238,23 @@ class SystemProbe:
         self._last = {"sessions": sessions, "boots": boots[:40], "visits": visits}
         return self._last
 
+    def _windows_logins(self) -> dict:
+        """Sesiones abiertas (consola o Escritorio remoto) y el arranque actual."""
+        sessions, visits = [], {}
+        try:
+            users = psutil.users()
+        except (AttributeError, OSError):
+            users = []
+        for u in users:
+            host = u.host or ""
+            visits[host or "local"] = visits.get(host or "local", 0) + 1
+            start = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(u.started)) if u.started else ""
+            sessions.append({"user": u.name, "tty": u.terminal or "console", "host": host, "start": start})
+        boots = [{"kernel": KERNEL,
+                  "start": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(psutil.boot_time()))}]
+        self._last = {"sessions": sessions, "boots": boots, "visits": visits}
+        return self._last
+
     # -- muestreo -----------------------------------------------------------
 
     def sample(self) -> dict:
@@ -211,7 +268,12 @@ class SystemProbe:
             procs = {}
             for p in psutil.process_iter(_ATTRS, ad_value=None):
                 i = p.info
-                procs[i["pid"]] = {"pid": i["pid"], "ppid": i["ppid"], "name": i["name"],
+                name = i["name"] or ""
+                if WINDOWS and (i["pid"] in _WIN_PSEUDO or name in _WIN_PSEUDO_NAMES):
+                    continue
+                if WINDOWS and name[-4:].lower() == ".exe":
+                    name = name[:-4]
+                procs[i["pid"]] = {"pid": i["pid"], "ppid": i["ppid"], "name": name,
                                    "rss": i["memory_info"].rss if i["memory_info"] else 0,
                                    "cpu": (i["cpu_times"].user + i["cpu_times"].system) if i["cpu_times"] else None,
                                    "create_time": i["create_time"]}
@@ -268,9 +330,15 @@ class SystemProbe:
             elif name in self.compilers:
                 group(compilers, name, info)
             elif owner is None and self._is_app(name):
-                group(apps, name, info)
+                if WINDOWS:
+                    group(apps, name, info, _pid=info["pid"])
+                else:
+                    group(apps, name, info)
 
         # 60% del mínimo: el mundo usa la diferencia como histéresis (no fundar/abandonar en bucle)
+        if WINDOWS:          # servicios de Windows (SYSTEM...) no son apps tuyas: no fundan aldeas
+            self._services = {p: v for p, v in self._services.items() if p in procs}
+            apps = {n: g for n, g in apps.items() if not self._service(g.pop("_pid"))}
         apps = dict(sorted(((n, g) for n, g in apps.items() if g["rss_mb"] >= 0.6 * self.app_min_rss),
                            key=lambda kv: -kv[1]["rss_mb"])[:self.app_max + 3])
         for table in (browsers, fortresses, compilers, apps):
@@ -303,7 +371,7 @@ class SystemProbe:
             "ram_used_mb": round((vm.total - vm.available) / MB),
             "ram_total_mb": round(vm.total / MB),
             "swap": psutil.swap_memory().percent,
-            "load1": round(os.getloadavg()[0], 2),
+            "load1": round(_load1(), 2),
             "cores": psutil.cpu_count() or 1,
             "procs": len(procs),
             "browsers": browsers,
@@ -316,7 +384,7 @@ class SystemProbe:
             "deaths": deaths,
             "cpu_temp": self._cpu_temp(),
             "boot": round(psutil.boot_time()),
-            "kernel": platform.release(),
+            "kernel": KERNEL,
             **self.logins(),               # sessions, boots, visits
             **rates,                       # net_rx, net_tx, disk_r, disk_w en MB/s
         }

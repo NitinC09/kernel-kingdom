@@ -167,7 +167,7 @@ def export(day: str | None = None, kingdom: str | None = None, era: str = "") ->
         return None
     if kingdom is None:
         try:
-            saved = json.loads(paths.save_file().read_text())
+            saved = json.loads(paths.save_file().read_text(encoding="utf-8"))
             kingdom = saved.get("kingdom", "")
         except (OSError, ValueError):
             kingdom = ""

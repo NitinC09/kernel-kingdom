@@ -1,2 +1,3 @@
-"""Kernel Kingdom: live wallpaper / idle game alimentado por tu sistema."""
-__version__ = "0.3.2"
+"""Old name of the package, kept so that launchers, systemd units and Windows shortcuts
+created by earlier versions (`python -m reino ...`) keep working. Everything lives in
+kingdom; these modules only forward to it."""

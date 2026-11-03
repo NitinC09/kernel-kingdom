@@ -1,18 +1,18 @@
-"""Presupuesto de recursos: si un cambio hace el mundo o el dibujo mucho más caros,
-esto falla. Los límites son holgados (máquinas lentas, CI); los valores típicos en
-una PC actual son ~10x menores."""
+"""Resource budget: if a change makes the world or the drawing much more expensive,
+this fails. The limits are generous (slow machines, CI); typical values on
+a current PC are ~10x lower."""
 import copy
 import os
 import time
 import unittest
 
-from reino import config
-from reino.daemon.probes import SystemProbe, scan_proc
-from reino.daemon.world import World
+from kingdom import config
+from kingdom.daemon.probes import SystemProbe, scan_proc
+from kingdom.daemon.world import World
 
 from test_world import fortress, proc, snap
 
-SLOW = float(os.environ.get("KK_PERF_SLACK", "1"))   # multiplicador para máquinas muy lentas
+SLOW = float(os.environ.get("KK_PERF_SLACK", "1"))   # multiplier for very slow machines
 
 
 class PerfTest(unittest.TestCase):
@@ -24,7 +24,7 @@ class PerfTest(unittest.TestCase):
                  apps={"claude": proc(400, 1), "steam": proc(600, 3)},
                  fortresses={"daemon:sshd": fortress("daemon", "sshd", 5000),
                              "container:web": fortress("container", "web", 9000)}, editors={"nvim": 2})
-        for _ in range(300):                       # mundo ya crecido
+        for _ in range(300):                       # a grown world
             w.step(copy.deepcopy(s))
         t0 = time.perf_counter()
         for _ in range(100):
@@ -41,13 +41,13 @@ class PerfTest(unittest.TestCase):
             p.sample()
         per = (time.perf_counter() - t0) / 5
         n = len(scan_proc({}) or {})
-        # ~0.02 ms por proceso en una PC actual; con margen
-        self.assertLess(per, (0.03 + n * 0.0003) * SLOW, f"muestreo {per * 1000:.1f} ms con {n} procesos")
+        # ~0.02 ms per process on a current PC; with margin
+        self.assertLess(per, (0.03 + n * 0.0003) * SLOW, f"muestreo {per * 1000:.1f} ms with {n} procesos")
 
     def test_frame_is_cheap(self):
         try:
-            from reino.render.iso import Painter
-        except ImportError as e:                    # sin cairo
+            from kingdom.render.iso import Painter
+        except ImportError as e:                    # without cairo
             self.skipTest(str(e))
         cfg = config.load()
         cfg["world"]["seed"] = 3
@@ -59,7 +59,7 @@ class PerfTest(unittest.TestCase):
         state.update(t=time.time(), interval=2.0, events=[], metrics={})
         p = Painter()
         p.set_state(state, 0.0)
-        p.frame(640, 360, 0.0)                     # el primero arma el mundo estático
+        p.frame(640, 360, 0.0)                     # the first one builds the static world
         t0 = time.perf_counter()
         for k in range(30):
             p.frame(640, 360, 0.05 * k)

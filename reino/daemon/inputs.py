@@ -5,6 +5,7 @@ Dos fuentes, se usa lo que haya:
     nunca guarda qué tecla fue. Requiere estar en el grupo `input`.
   * ext_idle_notifier_v1 (Wayland): sin permisos especiales. Solo sabe si
     estás activo (teclado/mouse) o ausente, no cuántas teclas.
+  * GetLastInputInfo (Windows): lo mismo que el anterior, consultado en cada espera.
 """
 import glob
 import os
@@ -13,6 +14,7 @@ import struct
 import threading
 import time
 
+from ..compat import idle_seconds
 from ..wl import Connection, Reader, u32
 
 EV_KEY, EV_REP = 1, 20
@@ -87,13 +89,38 @@ class IdleWatch:
             self.active, self.changed = True, now
 
 
+class PolledIdle:
+    """Windows: segundos desde la última entrada (GetLastInputInfo), sin permisos especiales.
+    Misma interfaz que IdleWatch (active, changed), pero sin socket: se consulta en cada espera."""
+    conn = None
+
+    def __init__(self, timeout_ms: int = 5000):
+        self.timeout = timeout_ms / 1000
+        secs = idle_seconds()
+        if secs is None:
+            raise RuntimeError("GetLastInputInfo no disponible")
+        self.active = secs < self.timeout
+        self.changed = time.monotonic() - secs
+
+    def poll(self):
+        secs = idle_seconds()
+        if secs is None or (secs < self.timeout) == self.active:
+            return
+        now = time.monotonic()
+        self.active = not self.active
+        self.changed = now if self.active else now - secs   # ausente desde el último toque
+
+
 class InputActivity:
     def __init__(self):
         self.keyboards = Keyboards()
-        try:
-            self.idle: IdleWatch | None = IdleWatch()
-        except (OSError, KeyError, RuntimeError, TimeoutError, ConnectionError):
-            self.idle = None
+        self.idle: IdleWatch | PolledIdle | None = None
+        for kind in (IdleWatch, PolledIdle):
+            try:
+                self.idle = kind()
+                break
+            except (OSError, KeyError, RuntimeError, TimeoutError, ConnectionError):
+                pass
         self._last = time.monotonic()
         self._active_time = 0.0
         self._idle_since: float | None = None
@@ -107,7 +134,7 @@ class InputActivity:
 
     def _fds(self) -> list:
         fds = list(self.keyboards.fds)
-        if self.idle:
+        if self.idle and self.idle.conn:
             fds.append(self.idle.conn)
         return fds
 
@@ -116,6 +143,7 @@ class InputActivity:
         fds = self._fds()
         if not fds:
             stop.wait(timeout)
+            self._poll()
             return
         ready, _, _ = select.select(fds, [], [], timeout)
         for f in ready:
@@ -128,6 +156,11 @@ class InputActivity:
             else:
                 self.keyboards.read(f)
 
+    def _poll(self):
+        if isinstance(self.idle, PolledIdle):
+            self._account()
+            self.idle.poll()
+
     def _account(self):
         """Acumula tiempo activo hasta ahora antes de que cambie el estado."""
         now = time.monotonic()
@@ -136,6 +169,7 @@ class InputActivity:
         self._last = now
 
     def take(self, dt: float) -> dict:
+        self._poll()
         self._account()
         keys, self.keyboards.count = self.keyboards.count, 0
         if self.idle:
